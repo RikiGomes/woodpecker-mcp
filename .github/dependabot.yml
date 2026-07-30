@@ -1,0 +1,20 @@
+version: 2
+updates:
+  # Dependencies are pinned to exact versions, so Dependabot is the mechanism
+  # that surfaces upstream releases and security advisories as reviewable PRs.
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      # One PR for routine dev-tooling bumps; runtime deps stay separate so
+      # an SDK or zod change always gets its own review.
+      dev-dependencies:
+        dependency-type: development
+        update-types:
+          - minor
+          - patch
+    commit-message:
+      prefix: deps
+      prefix-development: deps-dev

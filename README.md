@@ -82,6 +82,28 @@ npm run build   # emit dist/
 
 Everything is plain ESM; relative imports use explicit `.ts` extensions and the build rewrites them to `.js`.
 
+## Testing with the MCP Inspector
+
+The [MCP Inspector](https://modelcontextprotocol.io/docs/tools/inspector) is the quickest way to poke at the tools by hand:
+
+```bash
+npm run build
+npx @modelcontextprotocol/inspector node dist/index.js -e WOODPECKER_URL=https://ci.example.com -e WOODPECKER_TOKEN=<token>
+```
+
+**The Inspector does not pass your shell environment to the server it launches.** Prefixing the command (`WOODPECKER_URL=… npx @modelcontextprotocol/inspector …`) or `export`ing beforehand sets the variable on the Inspector, not on this server — which then starts with no instances configured. Use one of:
+
+- the `-e KEY=VALUE` flags shown above — note they go **after** `node dist/index.js`, not before;
+- the **Environment Variables** fields in the Inspector's connection pane (then Connect / Restart);
+- a `.env.woodpecker` file in the directory you launch from (the name is exact — a plain `.env` is not read).
+
+Scripted checks work too, via the Inspector's CLI mode:
+
+```bash
+npx @modelcontextprotocol/inspector --cli node dist/index.js --method tools/list
+npx @modelcontextprotocol/inspector --cli node dist/index.js --method tools/call --tool-name list_instances
+```
+
 ## Design notes
 
 - **Read-only by contract.** Intended for reviewer agents; there is deliberately no restart/approve/cancel surface.

@@ -30,17 +30,17 @@ jobs:
         with:
           node-version: ${{ matrix.node-version }}
           cache: npm
-      # Node 20.12 bundles npm 10.5, which fails to install platform-specific
-      # optional dependencies (npm/cli#4828), so vitest's rolldown native
-      # binding never lands. Stay within the 10.x line: npm 11 requires
-      # Node ^20.17 || >=22.9.
-      - if: matrix.node-version == '20.12'
-        run: npm i -g npm@10.9.9
       # --ignore-scripts skips the `prepare` build; it is run explicitly below.
       - run: npm ci --ignore-scripts
       - run: npm run check
-      - run: npm test
+      # vitest 4 bundles rolldown, which requires Node ^20.19 || >=22.12, so it
+      # cannot run on the 20.12 floor. The floor is covered by `npm run smoke`
+      # below, which drives the built server over stdio using only built-ins —
+      # a more faithful check of the shipped artifact than the unit tests.
+      - if: matrix.node-version != '20.12'
+        run: npm test
       - run: npm run build
+      - run: npm run smoke
 
   audit:
     runs-on: ubuntu-latest

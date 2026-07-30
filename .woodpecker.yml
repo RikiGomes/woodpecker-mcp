@@ -1,0 +1,12 @@
+when:
+  - event: [push, pull_request, manual]
+
+steps:
+  - name: ci
+    image: node:24-alpine
+    commands:
+      - npm ci --ignore-scripts
+      - npm audit --omit=dev --audit-level=high
+      - npm run check
+      - npm test
+      - npm run build

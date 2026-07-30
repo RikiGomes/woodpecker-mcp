@@ -1,0 +1,50 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Least privilege: nothing here needs write access to the repository.
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 20.12 is the floor declared in package.json engines (the version that
+        # introduced process.loadEnvFile); the others guard against regressions
+        # on current runtimes.
+        node-version: ['20.12', '22', '24']
+    name: test (node ${{ matrix.node-version }})
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: npm
+      # --ignore-scripts skips the `prepare` build; it is run explicitly below.
+      - run: npm ci --ignore-scripts
+      - run: npm run check
+      - run: npm test
+      - run: npm run build
+
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci --ignore-scripts
+      # Runtime dependencies only — dev-tool advisories should not block a
+      # release of a server that never ships them.
+      - run: npm audit --omit=dev --audit-level=high

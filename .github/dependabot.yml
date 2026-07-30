@@ -15,6 +15,20 @@ updates:
         update-types:
           - minor
           - patch
+    ignore:
+      # @types/node tracks the minimum supported runtime (engines: >=20.12),
+      # not the newest Node. Typing against a newer major lets code compile
+      # that would crash on the version this package promises to support.
+      - dependency-name: '@types/node'
+        update-types:
+          - version-update:semver-major
     commit-message:
       prefix: deps
       prefix-development: deps-dev
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: ci

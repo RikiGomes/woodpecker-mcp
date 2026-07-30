@@ -1,5 +1,7 @@
 # woodpecker-mcp
 
+[![CI](https://github.com/RikiGomes/woodpecker-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/RikiGomes/woodpecker-mcp/actions/workflows/ci.yml)
+
 MCP (Model Context Protocol) server for [Woodpecker CI](https://woodpecker-ci.org). Gives AI agents and MCP clients **read-only** visibility into pipeline status and logs across **multiple self-hosted Woodpecker instances** — so a code reviewer (human or agent) can check whether CI is green and pull the failing step's output without leaving the conversation.
 
 Built against the Woodpecker v3 REST API (verified on v3.16.0). No write operations: the server never restarts, approves, or cancels pipelines.

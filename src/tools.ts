@@ -83,16 +83,21 @@ function failedStepIds(pipeline: Pipeline): number[] {
 /**
  * A ZodObject whose validation treats a missing `arguments` object as `{}`.
  * Some MCP clients omit `arguments` entirely when every field is optional,
- * and the SDK would otherwise reject the call with a zod "Required" error.
+ * and the SDK would otherwise reject the call with a zod "expected object,
+ * received undefined" error.
  * It must stay a real ZodObject (not `.default({})` or `z.preprocess`):
  * the SDK only includes plain object schemas in the advertised tools/list
- * JSON schema, and it validates via `schema.safeParseAsync`.
+ * JSON schema and falls back to an empty `{}` schema for anything else.
+ * With zod 4 the SDK validates through the standalone `safeParseAsync`,
+ * which calls the schema's internal `_zod.run` rather than the instance
+ * method, so that is the hook wrapped here.
  */
 function toleratesMissingArgs<Shape extends z.ZodRawShape>(shape: Shape): z.ZodObject<Shape> {
   const schema = z.object(shape);
-  const original = schema.safeParseAsync.bind(schema);
-  schema.safeParseAsync = ((data: unknown, params?: Parameters<typeof original>[1]) =>
-    original(data ?? {}, params)) as typeof schema.safeParseAsync;
+  const internals = schema._zod;
+  const run = internals.run;
+  internals.run = (payload, ctx) =>
+    run({ ...payload, value: payload.value ?? {} }, ctx);
   return schema;
 }
 

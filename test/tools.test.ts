@@ -102,6 +102,15 @@ describe("woodpecker MCP tools", () => {
     ]);
   });
 
+  it("list_instances still advertises its parameters in tools/list", async () => {
+    // Guards toleratesMissingArgs: the SDK only converts plain object
+    // schemas to JSON schema and advertises `{}` for anything else, which
+    // would silently hide the `check` parameter from clients.
+    const { tools } = await client.listTools();
+    const tool = tools.find((t) => t.name === "list_instances");
+    expect(tool?.inputSchema.properties).toHaveProperty("check");
+  });
+
   it("list_instances works when the arguments object is omitted entirely", async () => {
     // Some MCP clients skip `arguments` when every field is optional.
     const result = await client.callTool({ name: "list_instances" });

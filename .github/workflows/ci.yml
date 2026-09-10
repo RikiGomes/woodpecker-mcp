@@ -4,6 +4,12 @@ on:
   push:
     branches: [main]
   pull_request:
+  # Advisories against transitive dependencies land without any commit, so
+  # without a scheduled run the audit job only fails on the next unrelated
+  # PR. A weekly run surfaces them on main with a failure email instead.
+  schedule:
+    - cron: '17 6 * * 1'
+  workflow_dispatch:
 
 # Least privilege: nothing here needs write access to the repository.
 permissions:

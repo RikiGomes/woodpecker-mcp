@@ -53,3 +53,24 @@ Tests inject a fake `fetch` through `ToolContext.fetchImpl` — no network. Test
 fixtures are deliberately generic (`acme/webapp`, `ci.example.com`); keep them
 that way. To exercise the real server end to end, see
 [.claude/skills/verify/SKILL.md](.claude/skills/verify/SKILL.md).
+
+<!-- house-rules:start (synced from claude-dotfiles; edit there) -->
+## House rules
+
+These hold in every repo and every session, including Claude Code on the web.
+
+- New work follows brainstorming, then a spec, then a plan, then execution (subagent-driven or inline), so design is agreed before code.
+- Work on a feature branch. Never commit to or push `main` without the user's go-ahead, because several repos deploy from `main`.
+- Confirm every push and every PR with the user first; the user decides when things merge.
+- Commit messages are conventional commits (`feat:`, `fix:`, `chore:`, ...), unless this repo defines its own format, so history stays scannable.
+- Verify task IDs, PR numbers, commit hashes and external facts with a tool before citing them, or leave them out, since one wrong reference undermines the rest.
+- Reviewers run the tests themselves, because a review that didn't run the suite can't vouch for it.
+- Report follow-up findings in the PR body instead of filing a ticket for each; the user decides what becomes a ticket. File one only when the work is genuinely separate, and say so to the user.
+- Fix every warning in the files you touch, including pre-existing ones, so tech debt shrinks with each PR.
+- Keep code comments rare and short, and put the reasoning in the PR body, so the diff stays clean.
+- Prefer a written rule over enforcement tooling: no new guard scripts, hooks or lint wrappers unless asked, because each one is another failure mode.
+- Look up library APIs with context7, the library's source or compiler errors. Never decompile binaries; the source is usually public.
+- No em dashes in anything you write (code, comments, UI strings, docs, commits). Use a hyphen, colon, semicolon or full stop, because em dashes read as generated prose.
+- Secrets never go in plaintext or in git. Token-bearing MCP servers start through `.claude/bin/with-secrets`, which reads Bitwarden Secrets Manager.
+- Hosting is self-hosted Coolify or Cloudflare, never Vercel, so pick frameworks that run in a plain Docker image.
+<!-- house-rules:end -->

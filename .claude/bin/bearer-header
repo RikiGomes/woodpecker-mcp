@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# headersHelper for HTTP MCP servers: prints {"Authorization":"Bearer <secret>"} for one
+# Bitwarden secret, fetched through with-secrets. Synced from claude-dotfiles/repo-kit.
+set -euo pipefail
+[[ $# -eq 1 ]] || { echo "usage: bearer-header <SECRET_NAME>" >&2; exit 1; }
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck disable=SC2016  # the script is single-quoted on purpose: it expands inside the child, after bws injects the secret
+exec "$here/with-secrets" bash -c '
+  v="${!1:-}"
+  [[ -n "$v" ]] || { echo "bearer-header: $1 not found in the Bitwarden project" >&2; exit 1; }
+  case "$v" in *\"*|*\\*) echo "bearer-header: $1 contains a quote or backslash" >&2; exit 1;; esac
+  printf "{\"Authorization\":\"Bearer %s\"}" "$v"' _ "$1"

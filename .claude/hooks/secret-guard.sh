@@ -633,6 +633,10 @@ if [[ "$cmd" =~ $bs_commit && "$cmd" =~ $bs_skip ]]; then
   skip_reason="${skip_reason:-the command text holds --no-verify or a core.hooksPath setting}"
   commit_word=1
 fi
+# A command that touches the git hook itself could remove or rewrite it before committing.
+hooks_touched=0
+bs_hooks='\.git/hooks|hooks/pre-commit'
+[[ "$cmd" =~ $bs_hooks ]] && hooks_touched=1
 shopt -u nocasematch
 
 # No commit found and the word commit never appears: not a commit. When the word appears but
@@ -645,7 +649,8 @@ if [[ -n "$skip_reason" ]]; then
 fi
 
 # Check each candidate repo once. A repo whose effective pre-commit hook is ours is left to
-# that hook: it sees the exact commit, including `git add` and `-a` in this call.
+# that hook: it sees the exact commit, including `git add` and `-a` in this call. Not when the
+# command text mentions the hook's path.
 seen="$US"
 for ((ci = 0; ci < ${#C_DIR[@]}; ci++)); do
   dir="${C_DIR[ci]}"; gd="${C_GITDIR[ci]}"; wt="${C_WT[ci]}"
@@ -659,7 +664,9 @@ for ((ci = 0; ci < ${#C_DIR[@]}; ci++)); do
     case "$seen" in *"$US$top$US"*) exit 0 ;; esac
     printf '%s\n' "$top" >> "$TMPD/seen"
     state="$(hooks_state "$top")"
-    if [[ "${state%%$'\t'*}" == ours && -x "$top/.claude/hooks/secret-guard.sh" ]]; then exit 0; fi
+    if [[ "${state%%$'\t'*}" == ours && -x "$top/.claude/hooks/secret-guard.sh" && $hooks_touched == 0 ]]; then exit 0; fi
+    why="no secret-guard git pre-commit hook here (${state%%$'\t'*})"
+    [[ $hooks_touched == 1 ]] && why="the command mentions the git hook's path, so its pre-commit hook may not run"
     cd "$top" || exit 0
     forced=()
     for e in ${F_ENTRY[@]+"${F_ENTRY[@]}"}; do
@@ -668,8 +675,8 @@ for ((ci = 0; ci < ${#C_DIR[@]}; ci++)); do
     done
     check_repo wide ${forced[@]+"${forced[@]}"}
     if [[ -n "$problems" ]]; then
-      printf '  %s: no secret-guard git pre-commit hook here (%s), so this checked staged and unstaged changes, untracked files and git add -f targets\n%s' \
-        "$top" "${state%%$'\t'*}" "$problems" >> "$TMPD/problems"
+      printf '  %s: %s, so this checked staged and unstaged changes, untracked files and git add -f targets\n%s' \
+        "$top" "$why" "$problems" >> "$TMPD/problems"
     fi
   )
   [[ -f "$TMPD/seen" ]] && while IFS= read -r l; do seen="$seen$l$US"; done < "$TMPD/seen"

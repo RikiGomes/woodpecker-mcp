@@ -36,8 +36,8 @@ install_gitleaks() {
 
 # The Bitwarden Secrets Manager CLI from its official GitHub release zip into ~/.local/bin (no
 # sudo), checksum-verified against the release's own checksums file. Never the official
-# bws.bitwarden.com/install script: it uses sudo whenever one exists, silently, straight after the
-# apt step above has cached the sudo timestamp. BWS_VERSION overrides the pinned version.
+# bws.bitwarden.com/install script: it uses sudo whenever one exists, silently, and does no
+# integrity check. BWS_VERSION overrides the pinned version.
 install_bws() {
   local v="${BWS_VERSION:-2.1.0}" os arch tmp base name expected actual rc
   case "$(uname -s)" in Linux) os=unknown-linux-gnu ;; Darwin) os=apple-darwin ;; *) echo "bws: unsupported OS" >&2; return 1 ;; esac

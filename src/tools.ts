@@ -146,7 +146,9 @@ export function registerTools(server: McpServer, context: ToolContext): void {
     {
       title: "List Woodpecker instances",
       description:
-        "Lists the configured Woodpecker CI instances. Use `check: true` to verify each instance is reachable and the token is valid.",
+        "Lists the Woodpecker CI instances this server is configured with (name and base URL); every other tool takes one of these names as `instance`. " +
+        "With `check: true` it also calls /api/user on each instance and reports per-instance connectivity as `ok (logged in as <login>)` or the error message; " +
+        "one unreachable instance does not fail the call. When no instance is configured it returns configuration instructions instead of a list.",
       inputSchema: toleratesMissingArgs({
         check: z
           .boolean()
@@ -182,7 +184,9 @@ export function registerTools(server: McpServer, context: ToolContext): void {
     {
       title: "List repositories",
       description:
-        "Lists repositories the token has access to on a Woodpecker instance. Returns repo ids usable with the other tools.",
+        "Lists repositories the instance's token can see, returning id, full_name, default_branch, active and forge_url for each. " +
+        "Active repositories only unless `all` is true; the list comes back in a single response (this tool takes no paging parameters). " +
+        "Use it to discover repositories; it isn't needed when you already know the \"owner/name\" slug, since the other tools accept slugs directly.",
       inputSchema: {
         instance: instanceParam,
         all: z.boolean().optional().describe("Include inactive repositories (default: active only)."),
@@ -208,7 +212,10 @@ export function registerTools(server: McpServer, context: ToolContext): void {
     {
       title: "List pipelines",
       description:
-        "Lists recent pipelines for a repository, newest first. Filter by branch, event or status to find e.g. the CI runs for a pull request branch.",
+        "Lists pipelines for one repository, newest first, paged (default 10 per page, max 50). " +
+        "Each entry has number, status, event, branch, first line of the commit message, short commit SHA, author, ISO created/started/finished times, pipeline errors if any, and a web URL. " +
+        "Filters are passed through to Woodpecker; `branch` matches exactly. Use them to find e.g. the runs for a pull request branch. " +
+        "Returns no workflow, step or log detail; use get_pipeline for that.",
       inputSchema: {
         instance: instanceParam,
         repo: repoParam,
@@ -261,8 +268,9 @@ export function registerTools(server: McpServer, context: ToolContext): void {
     {
       title: "Get pipeline details",
       description:
-        "Gets one pipeline with its workflows and steps (names, states, exit codes). " +
-        "Failed step ids are listed in `failed_step_ids` — fetch their output with get_step_logs.",
+        "Gets one pipeline by its per-repo number, or the newest one when `number` is \"latest\" (on the default branch, or on `branch` if given; `branch` is ignored for a concrete number). " +
+        "Returns the pipeline summary (including its concrete `number`), web URL, and every workflow with its steps (id, name, state, exit_code, type, error). " +
+        "`failed_step_ids` lists steps in state failure, error or killed; fetch their output with get_step_logs using the step id and this pipeline's concrete number. Returns no logs.",
       inputSchema: {
         instance: instanceParam,
         repo: repoParam,
@@ -295,7 +303,9 @@ export function registerTools(server: McpServer, context: ToolContext): void {
     {
       title: "Get step logs",
       description:
-        "Fetches the log output of one pipeline step (use the step ids from get_pipeline). Returns the last `tail` lines.",
+        "Fetches the log output of one step and returns its last `tail` lines (default 100, max 2000) as plain text under a one-line header saying how many of the total lines are shown; exit-code entries are prefixed `[exit code]`. " +
+        "`number` must be a concrete pipeline number — \"latest\" is rejected, so take the number from get_pipeline. `step_id` is the numeric id from get_pipeline, not the step name. " +
+        "A skipped step or one with no output returns a short note instead of logs.",
       inputSchema: {
         instance: instanceParam,
         repo: repoParam,

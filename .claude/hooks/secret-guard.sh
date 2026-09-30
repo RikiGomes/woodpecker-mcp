@@ -16,10 +16,18 @@ case "${1:-}" in
 esac
 
 if [[ "$mode" == hook ]]; then
-  # Fast path, builtins only (no fork): most Bash calls are not commits.
+  # Fast path: most Bash calls are not commits. Builtins only, plus one tr (linear, unlike
+  # ${var//...} on bash 3.2) when quoting could split co"mm"it or al''ias. In the JSON, a
+  # command's " and \ are escaped, so a \, ' or $ is what signals quoting.
   input=""
   IFS= read -r -d '' input || true
-  case "$input" in *commit*) ;; *) exit 0 ;; esac
+  case "$input" in
+    *commit*|*[Aa][Ll][Ii][Aa][Ss].*) ;;
+    *[\'\\\$]*)
+      norm="$(tr -d "\"'\\\\\$" <<< "$input")" || norm=commit
+      case "$norm" in *commit*|*[Aa][Ll][Ii][Aa][Ss].*) ;; *) exit 0 ;; esac ;;
+    *) exit 0 ;;
+  esac
 fi
 
 # cloud-setup.sh installs gitleaks into ~/.local/bin, which a hook's PATH may lack.
@@ -381,7 +389,8 @@ subst_end() {
 }
 
 # tokenize <text>: shell-like words into TOK; operators (; & | ( ) newline) become "$US<op>".
-# The bodies of $(...) and `...` go to SUBS, to be walked like sh -c scripts.
+# The bodies of $(...) and `...` go to SUBS, to be walked like sh -c scripts. A quoted or
+# escaped leading ~ becomes ./~, since bash does not expand it.
 tokenize() {
   local LC_ALL=C
   local s="$1" i=0 n=${#1} c w="" inw=0 rest part
@@ -390,10 +399,12 @@ tokenize() {
     c="${s:i:1}"
     case "$c" in
       "'")
+        [[ $inw == 0 && "${s:i+1:1}" == "~" ]] && w+="./"
         rest="${s:i+1}"
         if [[ "$rest" == *"'"* ]]; then part="${rest%%"'"*}"; else part="$rest"; fi
         w+="$part"; i=$((i+2+${#part})); inw=1 ;;
       '"')
+        [[ $inw == 0 && "${s:i+1:1}" == "~" ]] && w+="./"
         i=$((i+1)); inw=1
         while [[ $i -lt $n ]]; do
           c="${s:i:1}"
@@ -405,7 +416,8 @@ tokenize() {
             rest="${s:i+1}"; part="${rest%%\`*}"; SUBS[${#SUBS[@]}]="$part"; w+="\`$part\`"; i=$((i+2+${#part}))
           else w+="$c"; i=$((i+1)); fi
         done ;;
-      "\\") w+="${s:i+1:1}"; i=$((i+2)); inw=1 ;;
+      "\\") [[ $inw == 0 && "${s:i+1:1}" == "~" ]] && w+="./"
+            w+="${s:i+1:1}"; i=$((i+2)); inw=1 ;;
       '$')
         if [[ "${s:i+1:1}" == "(" ]]; then
           subst_end "$s" $((i+1)); SUBS[${#SUBS[@]}]="${s:i+2:SUB_END-i-3}"; w+="${s:i:SUB_END-i}"; i=$SUB_END
@@ -435,6 +447,18 @@ hp_check() {
   return 0
 }
 
+# alias_check <word>: an alias.* setting on the command line (git -c, --config-env,
+# GIT_CONFIG_KEY_n, GIT_CONFIG_PARAMETERS) can run a commit the parser never sees.
+alias_check() {
+  shopt -s nocasematch
+  case "$1" in
+    alias.*|GIT_CONFIG_KEY_[0-9]*=alias.*|GIT_CONFIG_PARAMETERS=*alias.*)
+      skip_reason="an inline git alias (alias.*), which can run a commit unseen"; commit_word=1 ;;
+  esac
+  shopt -u nocasematch
+  return 0
+}
+
 join_dir() { # join_dir <base> <path>: expands a leading ~ and resolves a relative path
   local p="$2"
   case "$p" in \~) p="${HOME:-}" ;; \~/*) p="${HOME:-}/${p#\~/}" ;; esac
@@ -454,8 +478,8 @@ analyze_git() {
     case "$w" in
       -C) [[ $# -ge 2 ]] && ctx="$(join_dir "$ctx" "$2")"; shift 2 || shift ;;
       -C?*) ctx="$(join_dir "$ctx" "${w#-C}")"; shift ;;
-      -c|--config-env) hp_check "${2:-}"; shift 2 || shift ;;
-      --config-env=*) hp_check "$w"; shift ;;
+      -c|--config-env) hp_check "${2:-}"; alias_check "${2:-}"; shift 2 || shift ;;
+      --config-env=*) hp_check "$w"; alias_check "${w#--config-env=}"; shift ;;
       --namespace|--super-prefix) shift 2 || shift ;;
       --git-dir=*) gitdir="${w#--git-dir=}"; shift ;;
       --git-dir) gitdir="${2:-}"; shift 2 || shift ;;
@@ -562,7 +586,7 @@ analyze() {
       case "$x" in
         GIT_DIR=*) seg_gd="${x#GIT_DIR=}"; k=$((k+1)); continue ;;
         GIT_WORK_TREE=*) seg_wt="${x#GIT_WORK_TREE=}"; k=$((k+1)); continue ;;
-        [A-Za-z_]*=*) hp_check "$x"; k=$((k+1)); continue ;;
+        [A-Za-z_]*=*) hp_check "$x"; alias_check "$x"; k=$((k+1)); continue ;;
       esac
       wn="${x##*/}"
       case "$wn" in
@@ -601,7 +625,7 @@ analyze() {
             case "$x" in
               GIT_DIR=*) add_cand "$cur" "$(join_dir "$cur" "${x#GIT_DIR=}")" ;;
               GIT_WORK_TREE=*) add_cand "$(join_dir "$cur" "${x#GIT_WORK_TREE=}")" ;;
-              *) hp_check "$x" ;;
+              *) hp_check "$x"; alias_check "$x" ;;
             esac
           done ;;
         eval) Q_CMD[${#Q_CMD[@]}]="${words[*]:k+1}"; Q_DIR[${#Q_DIR[@]}]="$cur" ;;
@@ -616,6 +640,130 @@ analyze() {
   done
 }
 
+# pc_redir <text> <index of ">">: accepts only a redirect to /dev/null or to another fd, and
+# sets PC_END to the index after it.
+pc_redir() {
+  local s="$1" j=$(( $2 + 1 )) w
+  case "${s:j:1}" in ">"|"|") j=$((j+1)) ;; esac
+  if [[ "${s:j:1}" == "&" ]]; then
+    j=$((j+1)); w="${s:j}"; w="${w%%[!0-9-]*}"; j=$((j+${#w}))
+  fi
+  if [[ -z "${w:-}" ]]; then
+    while [[ "${s:j:1}" == " " || "${s:j:1}" == $'\t' ]]; do j=$((j+1)); done
+    w="${s:j}"; w="${w%%[!A-Za-z0-9/._-]*}"; j=$((j+${#w}))
+    [[ "$w" == /dev/null ]] || return 1
+  fi
+  case "${s:j:1}" in ""|" "|$'\t'|"$NL"|";"|"&"|"|") PC_END=$j ;; *) return 1 ;; esac
+}
+
+# pc_catdoc <text> <index of "$">: matches $(cat <<'WORD' ... WORD) with a quoted delimiter
+# and nothing else inside, and sets PC_END after its ")". bash 3.2 matches the parentheses of
+# $( ) as if the body were code, so the body may not hold quotes, backslashes, $, backticks,
+# unbalanced parentheses, or # next to parentheses, nor a line starting with the delimiter.
+# Nor may it start with "-", in case -m was eaten as another option's value.
+pc_catdoc() {
+  local s="$1" j=$(( $2 + 2 )) d dq rest line t p depth=0 hash=0 paren=0 k
+  while [[ "${s:j:1}" == " " ]]; do j=$((j+1)); done
+  [[ "${s:j:6}" == "cat <<" ]] || return 1; j=$((j+6))
+  while [[ "${s:j:1}" == " " ]]; do j=$((j+1)); done
+  dq="${s:j:1}"; [[ "$dq" == "'" || "$dq" == '"' ]] || return 1
+  rest="${s:j+1}"; d="${rest%%"$dq"*}"
+  [[ "$rest" == *"$dq"* && -n "$d" && "$d" != *[!A-Za-z0-9_]* ]] || return 1
+  j=$((j+2+${#d}))
+  [[ "${s:j:1}" == "$NL" && "${s:j+1:1}" != "-" ]] || return 1; j=$((j+1))
+  while :; do
+    [[ $j -lt ${#s} ]] || return 1
+    rest="${s:j}"; line="${rest%%"$NL"*}"; j=$((j+${#line}+1))
+    [[ "$line" == "$d" ]] && break
+    t="${line#"${line%%[![:space:]]*}"}"
+    [[ "$t" == "$d"* ]] && return 1
+    case "$line" in *[\'\"\\\`\$]*) return 1 ;; esac
+    [[ "$line" == *"#"* ]] && hash=1
+    p="${line//[!()]/}"; [[ -n "$p" ]] && paren=1
+    for ((k = 0; k < ${#p}; k++)); do
+      if [[ "${p:k:1}" == "(" ]]; then depth=$((depth+1)); else depth=$((depth-1)); [[ $depth -lt 0 ]] && return 1; fi
+    done
+  done
+  [[ $depth -eq 0 && $((hash + paren)) -lt 2 ]] || return 1
+  while [[ "${s:j:1}" == " " || "${s:j:1}" == $'\t' || "${s:j:1}" == "$NL" ]]; do j=$((j+1)); done
+  [[ "${s:j:1}" == ")" ]] || return 1
+  PC_END=$((j+1))
+}
+
+# pc_msgopt <text> <index of the opening quote>: true when the quote opens the value of
+# `-m "..."` or `--message="..."`.
+pc_msgopt() {
+  local s="$1" k="$2"
+  if [[ $k -ge 10 && "${s:k-10:10}" == "--message=" ]]; then k=$((k-10))
+  else
+    [[ $k -gt 0 && ( "${s:k-1:1}" == " " || "${s:k-1:1}" == $'\t' ) ]] || return 1
+    while [[ $k -gt 0 && ( "${s:k-1:1}" == " " || "${s:k-1:1}" == $'\t' ) ]]; do k=$((k-1)); done
+    [[ $k -ge 2 && "${s:k-2:2}" == "-m" ]] || return 1; k=$((k-2))
+  fi
+  [[ $k -eq 0 ]] && return 0
+  case "${s:k-1:1}" in " "|$'\t'|"$NL"|";"|"&"|"|") return 0 ;; esac
+  return 1
+}
+
+# plain_commit <text>: true when every simple command is `git add ...`, `git commit ...` or
+# `cd <literal path>`, joined by ; && || or newlines, with no substitution, eval, subshell,
+# pipe, background job, heredoc, comment or redirect to a file. The one substitution allowed
+# is a pc_catdoc message that is the whole double-quoted value of -m or --message=. Only such
+# a command may defer to our git hook. Anything this lexer might read differently from bash
+# is refused.
+plain_commit() {
+  local LC_ALL=C
+  local s="$1" c q="" qs=-1 i=0 n=${#1} out="" w
+  # shellcheck disable=SC2016  # literal shell syntax to match
+  case "$s" in *'`'*|*'<('*|*'>('*|*"\$'"*|*'$"'*|*'${'*) return 1 ;; esac
+  while [[ $i -lt $n ]]; do
+    c="${s:i:1}"
+    if [[ "$q" == "'" ]]; then [[ "$c" == "'" ]] && q=""
+    elif [[ "$c" == "\\" ]]; then
+      [[ "${s:i+1:1}" != "$NL" ]] && out+="${s:i:2}"
+      i=$((i+2)); continue
+    elif [[ "$c" == '$' && "${s:i+1:1}" == "(" ]]; then
+      [[ "$q" == '"' && $qs -eq $((i-1)) ]] && pc_msgopt "$s" "$qs" && pc_catdoc "$s" "$i" || return 1
+      [[ "${s:PC_END:1}" == '"' ]] || return 1
+      case "${s:PC_END+1:1}" in ""|" "|$'\t'|"$NL"|";"|"&"|"|") ;; *) return 1 ;; esac
+      out+="M"; i=$PC_END; continue
+    elif [[ "$q" == '"' ]]; then [[ "$c" == '"' ]] && q=""
+    else
+      case "$c" in
+        "'"|'"') q="$c"; qs=$i ;;
+        "("|")") return 1 ;;
+        "#") [[ $i -eq 0 ]] && return 1
+             case "${s:i-1:1}" in " "|$'\t'|"$NL"|";"|"&"|"|"|"<"|">") return 1 ;; esac ;;
+        "&"|"|")
+          if [[ "${s:i+1:1}" == "$c" ]]; then out+="$c$c"; i=$((i+2)); continue; fi
+          [[ "$c" == "&" && "${s:i+1:1}" == ">" ]] || return 1
+          pc_redir "$s" $((i+1)) || return 1
+          out+=" "; i=$PC_END; continue ;;
+        ">") pc_redir "$s" "$i" || return 1; out+=" "; i=$PC_END; continue ;;
+        "<") [[ "${s:i+1:1}" == ">" || "${s:i+1:1}" == "<" ]] && return 1 ;;
+      esac
+    fi
+    out+="$c"; i=$((i+1))
+  done
+  [[ -z "$q" ]] || return 1
+  tokenize "$out"
+  local -a words=()
+  TOK[${#TOK[@]}]="$US;"
+  for w in "${TOK[@]}"; do
+    if [[ "$w" != "$US"* ]]; then words[${#words[@]}]="$w"; continue; fi
+    if [[ ${#words[@]} -gt 0 ]]; then
+      case "${words[0]}" in
+        git) case "${words[1]:-}" in add|commit) ;; *) return 1 ;; esac ;;
+        cd)
+          [[ ${#words[@]} -eq 2 ]] || return 1
+          case "${words[1]}" in ""|-*|*'$'*|*[*?[]*|\~[!/]*) return 1 ;; esac ;;
+        *) return 1 ;;
+      esac
+    fi
+    words=()
+  done
+}
+
 add_cand "$base"   # the session's cwd is always a candidate
 Q_CMD[0]="$cmd"; Q_DIR[0]="$base"; qi=0
 while [[ $qi -lt ${#Q_CMD[@]} && $qi -lt 32 ]]; do
@@ -624,24 +772,30 @@ while [[ $qi -lt ${#Q_CMD[@]} && $qi -lt 32 ]]; do
 done
 
 # Backstop that does not depend on the parser: the raw text holds the word commit and a
-# hook-skipping flag or a core.hooksPath setting. It can over-block a command that only
-# mentions them; that is the accepted cost.
+# hook-skipping flag, a core.hooksPath setting or an inline alias.* setting. It can
+# over-block a command that only mentions them; that is the accepted cost.
 shopt -s nocasematch
 bs_commit='(^|[^[:alnum:]_.-])commit([^[:alnum:]_-]|$)'
 bs_skip='--no-veri|core\.hookspath=|-c[[:space:]]+core\.hookspath|--config-env[=[:space:]]+core\.hookspath|GIT_CONFIG_(KEY|VALUE)_[0-9]+=[^[:space:]]*core\.hookspath|GIT_CONFIG_PARAMETERS=[^[:space:]]*core\.hookspath'
+bs_skip+="|-c[[:space:]]+['\"]?alias\\.|--config-env[=[:space:]]+['\"]?alias\\.|GIT_CONFIG_KEY_[0-9]+=['\"]?alias\\.|GIT_CONFIG_PARAMETERS=[^[:space:]]*alias\\."
 if [[ "$cmd" =~ $bs_commit && "$cmd" =~ $bs_skip ]]; then
-  skip_reason="${skip_reason:-the command text holds --no-verify or a core.hooksPath setting}"
+  skip_reason="${skip_reason:-the command text holds --no-verify, a core.hooksPath setting or an inline alias.* setting}"
   commit_word=1
 fi
 # A command that touches the git hook itself could remove or rewrite it before committing.
 hooks_touched=0
 bs_hooks='\.git/hooks|hooks/pre-commit'
 [[ "$cmd" =~ $bs_hooks ]] && hooks_touched=1
+mentions_commit=0
+cmd_norm="$(tr -d "\"'\\\\\$" <<< "$cmd")" || cmd_norm=commit
+[[ "$cmd_norm" =~ $bs_commit ]] && mentions_commit=1
 shopt -u nocasematch
+plain=0
+plain_commit "$cmd" && plain=1
 
-# No commit found and the word commit never appears: not a commit. When the word appears but
-# the parser found no commit invocation, fall through and scan anyway (fail safe).
-[[ $commit_seen == 1 || $commit_word == 1 ]] || exit 0
+# Not a commit only when the parser found none and the raw text never holds the word commit.
+# Quoting the parser misreads can hide a commit, so any mention falls through to the scan.
+[[ $commit_seen == 1 || $commit_word == 1 || $mentions_commit == 1 ]] || exit 0
 
 if [[ -n "$skip_reason" ]]; then
   echo "secret-guard: commit blocked: git hooks may not be skipped ($skip_reason). Commit without it; if a hook then blocks the commit, fix what it reports." >&2
@@ -649,8 +803,8 @@ if [[ -n "$skip_reason" ]]; then
 fi
 
 # Check each candidate repo once. A repo whose effective pre-commit hook is ours is left to
-# that hook: it sees the exact commit, including `git add` and `-a` in this call. Not when the
-# command text mentions the hook's path.
+# that hook: it sees the exact commit, including `git add` and `-a` in this call. Only for a
+# plain commit that does not mention the hook's path: anything else could change the hook first.
 seen="$US"
 for ((ci = 0; ci < ${#C_DIR[@]}; ci++)); do
   dir="${C_DIR[ci]}"; gd="${C_GITDIR[ci]}"; wt="${C_WT[ci]}"
@@ -664,9 +818,12 @@ for ((ci = 0; ci < ${#C_DIR[@]}; ci++)); do
     case "$seen" in *"$US$top$US"*) exit 0 ;; esac
     printf '%s\n' "$top" >> "$TMPD/seen"
     state="$(hooks_state "$top")"
-    if [[ "${state%%$'\t'*}" == ours && -x "$top/.claude/hooks/secret-guard.sh" && $hooks_touched == 0 ]]; then exit 0; fi
-    why="no secret-guard git pre-commit hook here (${state%%$'\t'*})"
-    [[ $hooks_touched == 1 ]] && why="the command mentions the git hook's path, so its pre-commit hook may not run"
+    kind="${state%%$'\t'*}"; hooked=0
+    [[ "$kind" == ours && -x "$top/.claude/hooks/secret-guard.sh" ]] && hooked=1
+    if [[ $hooked == 1 && $hooks_touched == 0 && $plain == 1 ]]; then exit 0; fi
+    why="no secret-guard git pre-commit hook here ($kind)"
+    if [[ $hooks_touched == 1 ]]; then why="the command mentions the git hook's path, so its pre-commit hook may not run"
+    elif [[ $hooked == 1 ]]; then why="the command is not a plain git add / git commit, so its pre-commit hook may not run"; fi
     cd "$top" || exit 0
     forced=()
     for e in ${F_ENTRY[@]+"${F_ENTRY[@]}"}; do

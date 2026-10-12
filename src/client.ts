@@ -1,7 +1,7 @@
 import type { WoodpeckerInstance } from "./config.ts";
 
 // Minimal typings for the Woodpecker v3 REST API (verified against the
-// v3.16.0 server source). Only the fields this server reads are declared.
+// v3.19.0 server source). Only the fields this server reads are declared.
 
 export interface Repo {
   id: number;
@@ -76,6 +76,93 @@ export interface User {
   admin?: boolean;
 }
 
+export interface FeedEntry {
+  repo_id: number;
+  full_name?: string;
+  number?: number;
+  event?: string;
+  status?: string;
+  branch?: string;
+  ref?: string;
+  title?: string;
+  message?: string;
+  commit?: string;
+  author?: string;
+  created?: number;
+  started?: number;
+  finished?: number;
+}
+
+export interface PullRequest {
+  index?: number | string;
+  title?: string;
+}
+
+export interface PipelineConfig {
+  name?: string;
+  hash?: string;
+  /** Base64-encoded file bytes (Go []byte JSON marshalling). */
+  data?: string | null;
+}
+
+export interface Cron {
+  id: number;
+  name?: string;
+  schedule?: string;
+  timezone?: string;
+  branch?: string;
+  enabled?: boolean;
+  next_exec?: number;
+  variables?: Record<string, string> | null;
+}
+
+export interface Secret {
+  name?: string;
+  events?: string[] | null;
+  images?: string[] | null;
+  note?: string;
+}
+
+export interface Agent {
+  id: number;
+  name?: string;
+  platform?: string;
+  backend?: string;
+  capacity?: number;
+  version?: string;
+  no_schedule?: boolean;
+  last_contact?: number;
+  last_work?: number;
+  org_id?: number;
+}
+
+export interface QueueTask {
+  id?: string;
+  name?: string;
+  repo_id?: number;
+  pipeline_number?: number;
+  agent_name?: string;
+  labels?: Record<string, string> | null;
+}
+
+export interface QueueInfo {
+  pending?: QueueTask[] | null;
+  waiting_on_deps?: QueueTask[] | null;
+  running?: QueueTask[] | null;
+  stats?: {
+    worker_count?: number;
+    pending_count?: number;
+    waiting_on_deps_count?: number;
+    running_count?: number;
+  };
+  paused?: boolean;
+}
+
+export interface PageOptions {
+  page?: number;
+  perPage?: number;
+}
+
 export interface PipelineFilters {
   branch?: string;
   event?: string;
@@ -141,8 +228,12 @@ export class WoodpeckerClient {
     return this.get<User>("/api/user");
   }
 
-  listRepos(all = false): Promise<Repo[]> {
-    return this.get<Repo[]>("/api/user/repos", all ? { all: "true" } : undefined);
+  listRepos(all = false, name?: string): Promise<Repo[]> {
+    return this.get<Repo[]>("/api/user/repos", { all: all ? "true" : undefined, name });
+  }
+
+  feed(): Promise<FeedEntry[] | null> {
+    return this.get<FeedEntry[] | null>("/api/user/feed");
   }
 
   getRepo(repoId: number): Promise<Repo> {
@@ -165,6 +256,34 @@ export class WoodpeckerClient {
       `/api/repos/${repoId}/pipelines/${number}`,
       number === "latest" ? { branch } : undefined,
     );
+  }
+
+  listBranches(repoId: number, paging: PageOptions = {}): Promise<string[] | null> {
+    return this.get<string[] | null>(`/api/repos/${repoId}/branches`, { ...paging });
+  }
+
+  listPullRequests(repoId: number, paging: PageOptions = {}): Promise<PullRequest[] | null> {
+    return this.get<PullRequest[] | null>(`/api/repos/${repoId}/pull_requests`, { ...paging });
+  }
+
+  getPipelineConfig(repoId: number, pipelineNumber: number): Promise<PipelineConfig[] | null> {
+    return this.get<PipelineConfig[] | null>(`/api/repos/${repoId}/pipelines/${pipelineNumber}/config`);
+  }
+
+  listCrons(repoId: number): Promise<Cron[] | null> {
+    return this.get<Cron[] | null>(`/api/repos/${repoId}/cron`);
+  }
+
+  listSecrets(repoId: number): Promise<Secret[] | null> {
+    return this.get<Secret[] | null>(`/api/repos/${repoId}/secrets`);
+  }
+
+  listAgents(): Promise<Agent[] | null> {
+    return this.get<Agent[] | null>("/api/agents");
+  }
+
+  queueInfo(): Promise<QueueInfo> {
+    return this.get<QueueInfo>("/api/queue/info");
   }
 
   getStepLogs(repoId: number, pipelineNumber: number, stepId: number): Promise<LogEntry[]> {

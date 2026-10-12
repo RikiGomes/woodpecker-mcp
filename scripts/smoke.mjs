@@ -9,7 +9,22 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
-const EXPECTED = ['get_pipeline', 'get_step_logs', 'list_instances', 'list_pipelines', 'list_repos'];
+const EXPECTED = [
+  'diagnose_pipeline',
+  'get_pipeline',
+  'get_pipeline_config',
+  'get_queue_info',
+  'get_step_logs',
+  'list_agents',
+  'list_branches',
+  'list_crons',
+  'list_instances',
+  'list_pipelines',
+  'list_pull_requests',
+  'list_repos',
+  'list_secrets',
+  'recent_activity',
+];
 
 const child = spawn(process.execPath, [join(root, 'dist', 'index.js')], {
   env: {

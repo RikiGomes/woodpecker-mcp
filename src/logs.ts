@@ -36,3 +36,52 @@ export function renderStepLogs(entries: LogEntry[] | null | undefined, tail: num
   const shown = tail > 0 ? lines.slice(-tail) : lines;
   return { text: shown.join("\n"), total: lines.length, shown: shown.length };
 }
+
+export interface LogMatches {
+  text: string;
+  total: number;
+  matches: number;
+  truncated: boolean;
+}
+
+/**
+ * Greps a step's log for `pattern`, returning each match with `context` lines
+ * either side (grep -C style, overlapping windows merged, groups separated by
+ * `--`). Lines are prefixed with their 1-based line number so the caller can
+ * ask for more context around a specific spot. Stops after `maxMatches`.
+ */
+export function searchStepLogs(
+  entries: LogEntry[] | null | undefined,
+  pattern: RegExp,
+  context: number,
+  maxMatches: number,
+): LogMatches {
+  const lines = renderStepLogs(entries, 0).text.split("\n");
+  if (lines.length === 1 && lines[0] === "") return { text: "", total: 0, matches: 0, truncated: false };
+
+  const hits: number[] = [];
+  let truncated = false;
+  for (let i = 0; i < lines.length; i++) {
+    if (pattern.test(lines[i] ?? "")) {
+      if (hits.length === maxMatches) {
+        truncated = true;
+        break;
+      }
+      hits.push(i);
+    }
+  }
+
+  const hitSet = new Set(hits);
+  const shown = new Set<number>();
+  for (const hit of hits) {
+    for (let i = Math.max(0, hit - context); i <= Math.min(lines.length - 1, hit + context); i++) shown.add(i);
+  }
+  const out: string[] = [];
+  let previous = -1;
+  for (const i of [...shown].sort((a, b) => a - b)) {
+    if (out.length && i > previous + 1) out.push("--");
+    out.push(`${i + 1}${hitSet.has(i) ? ":" : "-"} ${lines[i]}`);
+    previous = i;
+  }
+  return { text: out.join("\n"), total: lines.length, matches: hits.length, truncated };
+}

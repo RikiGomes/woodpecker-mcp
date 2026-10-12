@@ -11,10 +11,21 @@ Built against the Woodpecker v3 REST API (verified on v3.16.0). No write operati
 | Tool | Purpose |
 |------|---------|
 | `list_instances` | List configured instances; `check: true` verifies connectivity + token per instance |
-| `list_repos` | Repositories the token can access on an instance |
+| `list_repos` | Repositories the token can access on an instance; `name` filters by substring |
+| `recent_activity` | Newest pipelines across all your repos (Woodpecker's feed), filterable by status |
 | `list_pipelines` | Recent pipelines for a repo, filterable by branch / event / status |
 | `get_pipeline` | One pipeline with workflows, steps, exit codes, and `failed_step_ids` |
-| `get_step_logs` | Log output of a step (tailed, default last 100 lines) |
+| `diagnose_pipeline` | One-call triage: failed steps with their exit codes, errors and log tails |
+| `get_step_logs` | Log output of a step (tailed, default last 100 lines), or `match` to grep the whole log |
+| `get_pipeline_config` | The workflow YAML files Woodpecker fetched for a pipeline |
+| `list_branches` | Branch names from the forge |
+| `list_pull_requests` | Open pull requests from the forge |
+| `list_crons` | Cron jobs of a repo (variable names only) *(push access)* |
+| `list_secrets` | Secret names, events and images; never values *(push access)* |
+| `list_agents` | Build agents and when they last checked in *(admin)* |
+| `get_queue_info` | Pending / running tasks and worker counts, to explain stuck pipelines *(admin)* |
+
+Tools marked *(push access)* or *(admin)* return Woodpecker's 403 as a tool error when the token lacks that permission.
 
 Repos are addressed as `owner/name` or by numeric Woodpecker repo id. `get_pipeline` accepts `number: "latest"` (optionally with `branch`).
 

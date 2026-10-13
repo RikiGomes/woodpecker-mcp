@@ -186,6 +186,21 @@ describe("WoodpeckerClient", () => {
     expect(sent).toBeLessThan(60);
   });
 
+  it("accepts a JSON body with a UTF-8 byte order mark", async () => {
+    const fetchImpl = mockFetch(() => new Response('\uFEFF{"login":"bob"}', { status: 200 }));
+    const client = new WoodpeckerClient(INSTANCE, fetchImpl);
+    await expect(client.currentUser()).resolves.toEqual({ login: "bob" });
+  });
+
+  it("redacts a token that straddles the error-body cut-off", async () => {
+    const fetchImpl = mockFetch(
+      () => new Response(`${"e".repeat(295)}${INSTANCE.token}`, { status: 401 }),
+    );
+    const client = new WoodpeckerClient(INSTANCE, fetchImpl);
+    const error = (await client.currentUser().catch((e: unknown) => e)) as Error;
+    expect(error.message).not.toContain(INSTANCE.token.slice(0, 5));
+  });
+
   it("keeps the start of a large error body", async () => {
     const fetchImpl = mockFetch(() => new Response(`denied ${"x".repeat(100_000)}`, { status: 403 }));
     const client = new WoodpeckerClient(INSTANCE, fetchImpl);

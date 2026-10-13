@@ -350,10 +350,11 @@ export class WoodpeckerClient {
     }
 
     if (!response.ok) {
-      const raw = ((await readCapped(response, 4096, true).catch(() => "")) ?? "").slice(0, 300);
+      const raw = (await readCapped(response, 4096, true).catch(() => "")) ?? "";
       // Defence in depth: never relay the bearer token to the MCP client, even
       // if a misconfigured proxy/server echoes the Authorization header back.
-      const body = this.instance.token ? raw.split(this.instance.token).join("[redacted]") : raw;
+      // Redact before truncating so a token cut at the boundary cannot leak.
+      const body = (this.instance.token ? raw.split(this.instance.token).join("[redacted]") : raw).slice(0, 300);
       throw new WoodpeckerApiError(
         `${this.instance.name}: GET ${url.pathname} returned HTTP ${response.status}${body ? `: ${body}` : ""}`,
         response.status,
@@ -375,7 +376,7 @@ export class WoodpeckerClient {
       );
     }
     try {
-      return JSON.parse(text) as T;
+      return JSON.parse(text.replace(/^\uFEFF/, "")) as T;
     } catch {
       // e.g. a reverse proxy answering 200 with an HTML error/login page.
       throw new WoodpeckerApiError(

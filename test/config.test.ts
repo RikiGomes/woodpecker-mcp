@@ -91,7 +91,10 @@ describe("loadInstances", () => {
   it("rejects malformed instance URLs at load time", () => {
     expect(() =>
       loadInstances({ WOODPECKER_URL: "not a url", WOODPECKER_TOKEN: "tok" }),
-    ).toThrow(/Invalid URL.*not a url/);
+    ).toThrow(/Invalid URL.*WOODPECKER_URL/);
+    expect(() =>
+      loadInstances({ WOODPECKER_URL: "https://bob:hunter2@bad host", WOODPECKER_TOKEN: "tok" }),
+    ).not.toThrow(/hunter2/);
     expect(() =>
       loadInstances({ WOODPECKER_ACME_URL: "ci.example.com", WOODPECKER_ACME_TOKEN: "a" }),
     ).toThrow(/WOODPECKER_ACME_URL/);
@@ -257,6 +260,14 @@ describe("loadInstances with .env.woodpecker keys", () => {
     }
     expect(message).toContain("credentials in its URL");
     expect(message).not.toContain("hunter2");
+  });
+
+  it("prefers WOODPECKER_SERVER from the environment over WOODPECKER_URL from the file", () => {
+    const instances = loadInstances(
+      { WOODPECKER_URL: "https://evil.example.com", WOODPECKER_SERVER: "https://ci.example.com", WOODPECKER_TOKEN: "t" },
+      new Set(["WOODPECKER_URL"]),
+    );
+    expect(instances).toEqual([{ name: "default", url: "https://ci.example.com", token: "t" }]);
   });
 
   it("checks WOODPECKER_SERVER the same way as WOODPECKER_URL", () => {

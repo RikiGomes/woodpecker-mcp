@@ -50,8 +50,10 @@ export function loadInstances(
   };
 
   // WOODPECKER_URL deterministically beats WOODPECKER_SERVER (the official
-  // CLI variable) instead of depending on env iteration order.
-  const defaultUrlKey = env.WOODPECKER_URL ? "WOODPECKER_URL" : "WOODPECKER_SERVER";
+  // CLI variable) instead of depending on env iteration order, unless only
+  // WOODPECKER_SERVER comes from the real environment.
+  const urlKeys = (["WOODPECKER_URL", "WOODPECKER_SERVER"] as const).filter((key) => env[key]);
+  const defaultUrlKey = urlKeys.find((key) => !fileKeys.has(key)) ?? urlKeys[0] ?? "WOODPECKER_URL";
   const defaultUrl = env[defaultUrlKey];
   if (defaultUrl) upsert("default", "url", defaultUrl, defaultUrlKey);
   if (env.WOODPECKER_TOKEN) upsert("default", "token", env.WOODPECKER_TOKEN, "WOODPECKER_TOKEN");
@@ -75,7 +77,7 @@ export function loadInstances(
         parsed = new URL(url);
       } catch {
         throw new Error(
-          `Invalid URL for Woodpecker instance "${name}": "${entry.url}" (from ${envName}_URL). ` +
+          `Invalid URL for Woodpecker instance "${name}" (from ${entry.urlKey}). ` +
             "Expected a full base URL like https://ci.example.com.",
         );
       }

@@ -12,13 +12,14 @@ const ANSI = /\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g;
 /**
  * Decodes one log entry's base64 `data` field into UTF-8 text, without the
  * trailing newline, terminal escape codes, or spinner frames overwritten by
- * a carriage return (only the text after the last `\r` was visible).
+ * a carriage return (only the last non-empty frame was visible).
  */
 export function decodeLogEntry(entry: LogEntry): string {
   if (!entry.data) return "";
   const text = Buffer.from(entry.data, "base64").toString("utf8").replace(/\r?\n$/, "").replace(ANSI, "");
-  const lastFrame = text.lastIndexOf("\r");
-  return lastFrame === -1 ? text : text.slice(lastFrame + 1);
+  if (!text.includes("\r")) return text;
+  const frames = text.split("\r");
+  return frames.findLast((frame) => frame !== "") ?? "";
 }
 
 /**
@@ -42,8 +43,8 @@ export function renderStepLogs(
   tail: number,
   maxChars = Number.POSITIVE_INFINITY,
 ): RenderedLogs {
-  const lines = collapseRepeats(logLines(entries));
-  const shown = (tail > 0 ? lines.slice(-tail) : lines).map((line) => clip(line, MAX_TAIL_LINE_CHARS));
+  const lines = collapseRepeats(logLines(entries).map((line) => clip(line, MAX_TAIL_LINE_CHARS)));
+  const shown = tail > 0 ? lines.slice(-tail) : lines;
   // Keep the newest lines when the tail is still too large for the caller's context.
   let size = shown.reduce((sum, line) => sum + line.length + 1, 0);
   while (shown.length > 1 && size > maxChars) size -= shown.shift()!.length + 1;

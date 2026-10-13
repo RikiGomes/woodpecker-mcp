@@ -109,6 +109,7 @@ describe("log noise", () => {
   it("strips colour codes, hyperlinks and spinner frames", () => {
     expect(decodeLogEntry(entry("\x1b[31merror\x1b[0m: \x1b]8;;https://x\x07link\x1b]8;;\x07\n"))).toBe("error: link");
     expect(decodeLogEntry(entry("10%\r50%\r100% done\n"))).toBe("100% done");
+    expect(decodeLogEntry(entry("progress 90%\r"))).toBe("progress 90%");
   });
 
   it("drops progress entries and collapses repeated lines", () => {
@@ -118,6 +119,12 @@ describe("log noise", () => {
     );
     expect(rendered.text).toBe("start\nretry [repeated 3 times]\nend");
     expect(rendered.total).toBe(3);
+  });
+
+  it("keeps the repeat marker on a clipped line", () => {
+    const long = "w".repeat(3000);
+    const rendered = renderStepLogs([entry(long, 0, 1), entry(long, 0, 2)], 0);
+    expect(rendered.text).toMatch(/chars clipped\] \[repeated 2 times\]$/);
   });
 });
 

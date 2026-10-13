@@ -9,7 +9,22 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
-const EXPECTED = ['get_pipeline', 'get_step_logs', 'list_instances', 'list_pipelines', 'list_repos'];
+const EXPECTED = [
+  'diagnose_pipeline',
+  'get_pipeline',
+  'get_pipeline_config',
+  'get_queue_info',
+  'get_step_logs',
+  'list_agents',
+  'list_branches',
+  'list_crons',
+  'list_instances',
+  'list_pipelines',
+  'list_pull_requests',
+  'list_repos',
+  'list_secrets',
+  'recent_activity',
+];
 
 const child = spawn(process.execPath, [join(root, 'dist', 'index.js')], {
   env: {
@@ -78,10 +93,10 @@ setTimeout(() => {
     fail(`list_instances did not report the configured instance: ${JSON.stringify(call)}`);
   }
 
-  // stdout is the protocol channel — anything unparseable there would corrupt it.
+  // stdout is the protocol channel: anything unparseable there would corrupt it.
   const noise = stdout.split('\n').filter((l) => l.trim() && !l.trim().startsWith('{'));
   if (noise.length) fail(`non-JSON output on stdout: ${JSON.stringify(noise.slice(0, 3))}`);
 
-  console.log(`smoke: OK on Node ${process.version} — ${names.length} tools, stdout clean`);
+  console.log(`smoke: OK on Node ${process.version}: ${names.length} tools, stdout clean`);
   process.exit(0);
 }, 3000);

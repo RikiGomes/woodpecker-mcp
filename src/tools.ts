@@ -1,8 +1,8 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { findInstance, type WoodpeckerInstance } from "./config.ts";
-import { WoodpeckerClient, type Pipeline, type Step, type Workflow } from "./client.ts";
-import { renderStepLogs } from "./logs.ts";
+import { WoodpeckerClient, type Pipeline, type QueueTask, type Step, type Workflow } from "./client.ts";
+import { renderStepLogs, searchStepLogs } from "./logs.ts";
 
 export interface ToolContext {
   instances: WoodpeckerInstance[];
@@ -72,11 +72,11 @@ function workflowSummary(workflow: Workflow) {
   };
 }
 
-function failedStepIds(pipeline: Pipeline): number[] {
+function failedSteps(pipeline: Pipeline): Array<{ workflow: Workflow; step: Step }> {
   return (pipeline.workflows ?? []).flatMap((workflow) =>
     (workflow.children ?? [])
       .filter((step) => step.state !== undefined && FAILED_STATES.has(step.state))
-      .map((step) => step.id),
+      .map((step) => ({ workflow, step })),
   );
 }
 
@@ -99,6 +99,14 @@ function toleratesMissingArgs<Shape extends z.ZodRawShape>(shape: Shape): z.ZodO
   internals.run = (payload, ctx) =>
     run({ ...payload, value: payload.value ?? {} }, ctx);
   return schema;
+}
+
+const MAX_LOG_MATCHES = 50;
+
+function matchTerms(match: string): string[] {
+  const terms = match.split("|").map((term) => term.trim()).filter(Boolean);
+  if (terms.length === 0) throw new Error("`match` needs at least one non-empty search term.");
+  return terms;
 }
 
 const CONFIG_HELP =
@@ -135,7 +143,7 @@ export function registerTools(server: McpServer, context: ToolContext): void {
     if (typeof value === "string") {
       const trimmed = value.trim().toLowerCase();
       if (trimmed === "latest") return "latest";
-      // Reject "0"/"00" too — pipeline numbers start at 1.
+      // Reject "0"/"00" too: pipeline numbers start at 1.
       if (/^\d+$/.test(trimmed) && Number(trimmed) >= 1) return Number(trimmed);
     }
     throw new Error(`Invalid pipeline number "${value}": pass a positive integer or "latest".`);
@@ -185,16 +193,21 @@ export function registerTools(server: McpServer, context: ToolContext): void {
       title: "List repositories",
       description:
         "Lists repositories the instance's token can see, returning id, full_name, default_branch, active and forge_url for each. " +
-        "Active repositories only unless `all` is true; the list comes back in a single response (this tool takes no paging parameters). " +
+        "Active repositories only unless `all` is true; `name` keeps only repositories whose owner/name contains it (case-insensitive). The list comes back in a single response (this tool takes no paging parameters). " +
         "Use it to discover repositories; it isn't needed when you already know the \"owner/name\" slug, since the other tools accept slugs directly.",
       inputSchema: {
         instance: instanceParam,
         all: z.boolean().optional().describe("Include inactive repositories (default: active only)."),
+        name: z.string().optional().describe('Only repositories whose "owner/name" contains this text (case-insensitive).'),
       },
     },
-    async ({ instance, all }) =>
+    async ({ instance, all, name }) =>
       run(async () => {
-        const repos = await clientFor(instance).listRepos(all ?? false);
+        // Filtered here: Woodpecker's own `name` filter is an exact match on the short name and is ignored with `all`.
+        const needle = name?.trim().toLowerCase();
+        const repos = (await clientFor(instance).listRepos(all ?? false)).filter(
+          (repo) => !needle || (repo.full_name ?? "").toLowerCase().includes(needle),
+        );
         return ok(
           repos.map((repo) => ({
             id: repo.id,
@@ -292,7 +305,7 @@ export function registerTools(server: McpServer, context: ToolContext): void {
           repo_id: repoId,
           url: client.pipelineUrl(repoId, pipeline.number),
           ...pipelineSummary(pipeline),
-          failed_step_ids: failedStepIds(pipeline),
+          failed_step_ids: failedSteps(pipeline).map(({ step }) => step.id),
           workflows: (pipeline.workflows ?? []).map(workflowSummary),
         });
       }),
@@ -304,7 +317,10 @@ export function registerTools(server: McpServer, context: ToolContext): void {
       title: "Get step logs",
       description:
         "Fetches the log output of one step and returns its last `tail` lines (default 100, max 2000) as plain text under a one-line header saying how many of the total lines are shown; exit-code entries are prefixed `[exit code]`. " +
-        "`number` must be a concrete pipeline number — \"latest\" is rejected, so take the number from get_pipeline. `step_id` is the numeric id from get_pipeline, not the step name. " +
+        "`number` must be a concrete pipeline number (\"latest\" is rejected), so take the number from get_pipeline. `step_id` is the numeric id from get_pipeline, not the step name. " +
+        "With `match`, it instead searches the whole log (not just the tail) for lines containing the text, case-insensitive, and returns up to 50 matching lines; " +
+        "`match` is plain text, not a regular expression, with `|` separating alternatives (e.g. \"error|failed\"). Each match comes " +
+        "with `context` lines either side and prefixed with its line number (`12:` for a match, `11-` for context); `tail` is ignored then. " +
         "A skipped step or one with no output returns a short note instead of logs.",
       inputSchema: {
         instance: instanceParam,
@@ -318,9 +334,22 @@ export function registerTools(server: McpServer, context: ToolContext): void {
           .max(2000)
           .optional()
           .describe("Number of trailing log lines to return (default 100, max 2000)."),
+        match: z
+          .string()
+          .min(1)
+          .max(200)
+          .optional()
+          .describe('Case-insensitive text to search the whole log for; "|" separates alternatives, e.g. "error|failed".'),
+        context: z
+          .number()
+          .int()
+          .min(0)
+          .max(20)
+          .optional()
+          .describe("With `match`: lines of context either side of each match (default 2, max 20)."),
       },
     },
-    async ({ instance, repo, number, step_id, tail }) =>
+    async ({ instance, repo, number, step_id, tail, match, context: contextLines }) =>
       run(async () => {
         const client = clientFor(instance);
         const repoId = await client.resolveRepoId(repo);
@@ -328,17 +357,363 @@ export function registerTools(server: McpServer, context: ToolContext): void {
         if (pipelineNumber === "latest") {
           throw new Error('get_step_logs needs a concrete pipeline number, not "latest".');
         }
+        const terms = match === undefined ? undefined : matchTerms(match);
         const entries = await client.getStepLogs(repoId, pipelineNumber, step_id);
         const rendered = renderStepLogs(entries, tail ?? 100);
-        const prefix = `# ${client.instance.name} ${repo} pipeline #${pipelineNumber} step ${step_id} — `;
+        const prefix = `# ${client.instance.name} ${repo} pipeline #${pipelineNumber} step ${step_id}: `;
         if (rendered.total === 0) {
           return ok(`${prefix}no log output (step was skipped or produced no logs).`);
+        }
+        if (terms) {
+          const found = searchStepLogs(entries, terms, contextLines ?? 2, MAX_LOG_MATCHES);
+          const quoted = terms.map((term) => JSON.stringify(term)).join(" or ");
+          if (found.matches === 0) return ok(`${prefix}no lines contain ${quoted} in ${found.total} lines.`);
+          const summary =
+            `${found.matches} match${found.matches === 1 ? "" : "es"} for ${quoted} in ${found.total} lines` +
+            (found.truncated ? ` (stopped at ${MAX_LOG_MATCHES}; narrow the search for more)` : "");
+          return ok(`${prefix}${summary}\n${found.text}`);
         }
         const header =
           prefix +
           `showing ${rendered.shown} of ${rendered.total} lines` +
-          (rendered.shown < rendered.total ? " (tail — increase `tail` for more)" : "");
+          (rendered.shown < rendered.total ? " (tail; increase `tail` for more)" : "");
         return ok(`${header}\n${rendered.text}`);
+      }),
+  );
+  const pageParams = {
+    page: z.number().int().positive().optional().describe("Page number (default 1)."),
+    per_page: z
+      .number()
+      .int()
+      .positive()
+      .max(50)
+      .optional()
+      .describe("Results per page (default 50, max 50)."),
+  };
+
+  /** Resolves "latest" (optionally per branch) to a concrete pipeline number. */
+  const concreteNumber = async (
+    client: WoodpeckerClient,
+    repoId: number,
+    value: number | string,
+    branch?: string,
+  ): Promise<number> => {
+    const parsed = parsePipelineNumber(value);
+    return parsed === "latest" ? (await client.getPipeline(repoId, "latest", branch)).number : parsed;
+  };
+
+  server.registerTool(
+    "recent_activity",
+    {
+      title: "Recent pipeline activity",
+      description:
+        "Lists the most recent pipelines across the repositories the token has push or admin access to, newest first: repo full_name, pipeline number, status, event, branch, title, short commit, author, ISO times and web URL. " +
+        "Use it to answer \"what is failing / running right now?\" without knowing a repo. Woodpecker returns only the 50 newest pipelines; `status` filters within those (e.g. failure) and `limit` caps the result (default 20, max 50). " +
+        "For older history of one repo use list_pipelines.",
+      inputSchema: {
+        instance: instanceParam,
+        status: z.string().optional().describe("Only pipelines in this status, e.g. failure, running, success."),
+        limit: z.number().int().positive().max(50).optional().describe("Maximum entries (default 20, max 50)."),
+      },
+    },
+    async ({ instance, status, limit }) =>
+      run(async () => {
+        const client = clientFor(instance);
+        const feed = (await client.feed()) ?? [];
+        const wanted = status?.trim().toLowerCase();
+        const entries = feed
+          .filter((entry) => !wanted || entry.status === wanted)
+          .sort((a, b) => (b.created ?? 0) - (a.created ?? 0))
+          .slice(0, limit ?? 20);
+        return ok({
+          instance: client.instance.name,
+          pipelines: entries.map((entry) => ({
+            repo: entry.full_name,
+            repo_id: entry.repo_id,
+            number: entry.number,
+            status: entry.status,
+            event: entry.event,
+            branch: entry.branch,
+            title: (entry.title || entry.message)?.split("\n", 1)[0],
+            commit: entry.commit?.slice(0, 10),
+            author: entry.author,
+            created: isoTime(entry.created),
+            started: isoTime(entry.started),
+            finished: isoTime(entry.finished),
+            url: entry.number ? client.pipelineUrl(entry.repo_id, entry.number) : undefined,
+          })),
+        });
+      }),
+  );
+
+  server.registerTool(
+    "list_branches",
+    {
+      title: "List branches",
+      description:
+        "Lists branch names of a repository as reported by its forge (Gitea, Forgejo, GitHub, GitLab, ...), paged (up to 50 per page). " +
+        "An empty list can also mean the forge does not support listing branches.",
+      inputSchema: { instance: instanceParam, repo: repoParam, ...pageParams },
+    },
+    async ({ instance, repo, page, per_page }) =>
+      run(async () => {
+        const client = clientFor(instance);
+        const repoId = await client.resolveRepoId(repo);
+        const branches = (await client.listBranches(repoId, { page, perPage: per_page })) ?? [];
+        return ok({ instance: client.instance.name, repo, repo_id: repoId, branches });
+      }),
+  );
+
+  server.registerTool(
+    "list_pull_requests",
+    {
+      title: "List pull requests",
+      description:
+        "Lists open pull requests of a repository as reported by its forge, as index (the PR number) and title, paged (up to 50 per page). " +
+        "To check CI for one, call list_pipelines with event=pull_request and the PR's branch, or get_pipeline with number=\"latest\" and that branch. " +
+        "An empty list can also mean the forge does not support listing pull requests.",
+      inputSchema: { instance: instanceParam, repo: repoParam, ...pageParams },
+    },
+    async ({ instance, repo, page, per_page }) =>
+      run(async () => {
+        const client = clientFor(instance);
+        const repoId = await client.resolveRepoId(repo);
+        const prs = (await client.listPullRequests(repoId, { page, perPage: per_page })) ?? [];
+        return ok({
+          instance: client.instance.name,
+          repo,
+          repo_id: repoId,
+          pull_requests: prs.map((pr) => ({ index: pr.index, title: pr.title })),
+        });
+      }),
+  );
+
+  server.registerTool(
+    "get_pipeline_config",
+    {
+      title: "Get pipeline config",
+      description:
+        "Returns the workflow config files (e.g. .woodpecker/*.yaml) exactly as Woodpecker fetched them for one pipeline, as file name plus YAML text. " +
+        "This is the raw config at that commit, before matrix expansion or `when` evaluation, returned verbatim (including any values written inline in the YAML). Use it to tell a config problem from a code problem. " +
+        "`number` may be \"latest\" (default branch, or `branch`).",
+      inputSchema: {
+        instance: instanceParam,
+        repo: repoParam,
+        number: pipelineNumberParam,
+        branch: z.string().optional().describe('With number="latest": use the latest pipeline of this branch.'),
+      },
+    },
+    async ({ instance, repo, number, branch }) =>
+      run(async () => {
+        const client = clientFor(instance);
+        const repoId = await client.resolveRepoId(repo);
+        const pipelineNumber = await concreteNumber(client, repoId, number, branch);
+        const configs = (await client.getPipelineConfig(repoId, pipelineNumber)) ?? [];
+        if (configs.length === 0) {
+          return ok(`# ${client.instance.name} ${repo} pipeline #${pipelineNumber}: no stored config files.`);
+        }
+        const files = configs.map(
+          (config) =>
+            `## ${config.name ?? "(unnamed)"}\n` +
+            (config.data ? Buffer.from(config.data, "base64").toString("utf8").replace(/\n$/, "") : ""),
+        );
+        return ok(`# ${client.instance.name} ${repo} pipeline #${pipelineNumber} config\n\n${files.join("\n\n")}`);
+      }),
+  );
+
+  server.registerTool(
+    "diagnose_pipeline",
+    {
+      title: "Diagnose a failed pipeline",
+      description:
+        "One-call failure triage: fetches a pipeline (by number, or \"latest\" on the default branch or `branch`), then the last `tail` log lines (default 40, max 200) of each failed step, up to 5 steps. " +
+        "Returns the pipeline summary, web URL, pipeline-level errors, and per failed step its workflow, name, exit code, error and log tail. " +
+        "For a pipeline with no failed steps it says so and returns the summary only. Use get_step_logs with `match` to dig further into one step.",
+      inputSchema: {
+        instance: instanceParam,
+        repo: repoParam,
+        number: pipelineNumberParam,
+        branch: z.string().optional().describe('With number="latest": use the latest pipeline of this branch.'),
+        tail: z
+          .number()
+          .int()
+          .positive()
+          .max(200)
+          .optional()
+          .describe("Trailing log lines per failed step (default 40, max 200)."),
+      },
+    },
+    async ({ instance, repo, number, branch, tail }) =>
+      run(async () => {
+        const client = clientFor(instance);
+        const repoId = await client.resolveRepoId(repo);
+        const pipeline = await client.getPipeline(repoId, parsePipelineNumber(number), branch);
+        const failed = failedSteps(pipeline);
+        const MAX_STEPS = 5;
+        const failed_steps = await Promise.all(
+          failed.slice(0, MAX_STEPS).map(async ({ workflow, step }) => {
+            let logs: string;
+            try {
+              const rendered = renderStepLogs(await client.getStepLogs(repoId, pipeline.number, step.id), tail ?? 40);
+              logs =
+                rendered.total === 0
+                  ? "(no log output)"
+                  : `(last ${rendered.shown} of ${rendered.total} lines)\n${rendered.text}`;
+            } catch (error) {
+              logs = `(could not fetch logs: ${error instanceof Error ? error.message : String(error)})`;
+            }
+            return {
+              workflow: workflow.name,
+              step: step.name,
+              step_id: step.id,
+              state: step.state,
+              exit_code: step.exit_code,
+              error: step.error || undefined,
+              logs,
+            };
+          }),
+        );
+        return ok({
+          instance: client.instance.name,
+          repo,
+          repo_id: repoId,
+          url: client.pipelineUrl(repoId, pipeline.number),
+          ...pipelineSummary(pipeline),
+          verdict:
+            failed.length === 0
+              ? pipeline.errors?.length || FAILED_STATES.has(pipeline.status ?? "")
+                ? `Pipeline ${pipeline.status ?? "failed"} without a failed step, usually a config or setup problem: see \`errors\`, and get_pipeline_config for the YAML.`
+                : `No failed steps (pipeline status: ${pipeline.status ?? "unknown"}).`
+              : `${failed.length} failed step${failed.length === 1 ? "" : "s"}` +
+                (failed.length > MAX_STEPS ? `; showing the first ${MAX_STEPS}` : "") +
+                ".",
+          failed_steps,
+        });
+      }),
+  );
+
+  server.registerTool(
+    "list_crons",
+    {
+      title: "List cron jobs",
+      description:
+        "Lists a repository's cron jobs: id, name, schedule, timezone, branch, enabled, next run (ISO) and the names of the variables each sets (not their values). " +
+        "Requires push access to the repository; Woodpecker answers 403 otherwise. Pipelines started by a cron have event \"cron\".",
+      inputSchema: { instance: instanceParam, repo: repoParam },
+    },
+    async ({ instance, repo }) =>
+      run(async () => {
+        const client = clientFor(instance);
+        const repoId = await client.resolveRepoId(repo);
+        const crons = (await client.listCrons(repoId)) ?? [];
+        return ok({
+          instance: client.instance.name,
+          repo,
+          repo_id: repoId,
+          crons: crons.map((cron) => ({
+            id: cron.id,
+            name: cron.name,
+            schedule: cron.schedule,
+            timezone: cron.timezone,
+            branch: cron.branch || undefined,
+            enabled: cron.enabled,
+            next_run: isoTime(cron.next_exec),
+            variables: cron.variables ? Object.keys(cron.variables) : undefined,
+          })),
+        });
+      }),
+  );
+
+  server.registerTool(
+    "list_secrets",
+    {
+      title: "List secret names",
+      description:
+        "Lists the names of a repository's secrets with the events and plugin images each is available to, and its note. Secret values are never returned. " +
+        "Use it to debug \"secret not found\" or a secret missing for an event (e.g. pull_request). Requires push access to the repository; Woodpecker answers 403 otherwise. " +
+        "Organization and global secrets are not included.",
+      inputSchema: { instance: instanceParam, repo: repoParam },
+    },
+    async ({ instance, repo }) =>
+      run(async () => {
+        const client = clientFor(instance);
+        const repoId = await client.resolveRepoId(repo);
+        const secrets = (await client.listSecrets(repoId)) ?? [];
+        return ok({
+          instance: client.instance.name,
+          repo,
+          repo_id: repoId,
+          secrets: secrets.map((secret) => ({
+            name: secret.name,
+            events: secret.events ?? [],
+            images: secret.images?.length ? secret.images : undefined,
+            note: secret.note || undefined,
+          })),
+        });
+      }),
+  );
+
+  server.registerTool(
+    "list_agents",
+    {
+      title: "List agents",
+      description:
+        "Lists the instance's build agents: id, name, platform, backend, capacity, version, whether scheduling is paused (no_schedule), org_id (-1 for global agents), and ISO last contact / last work times. " +
+        "Use it to see whether agents are online when pipelines sit pending. Requires an admin token; Woodpecker answers 403 otherwise.",
+      inputSchema: { instance: instanceParam },
+    },
+    async ({ instance }) =>
+      run(async () => {
+        const client = clientFor(instance);
+        const agents = (await client.listAgents()) ?? [];
+        // Explicit field list: the endpoint also returns each agent's secret token.
+        return ok({
+          instance: client.instance.name,
+          agents: agents.map((agent) => ({
+            id: agent.id,
+            name: agent.name,
+            platform: agent.platform,
+            backend: agent.backend,
+            capacity: agent.capacity,
+            version: agent.version,
+            no_schedule: agent.no_schedule,
+            org_id: agent.org_id,
+            last_contact: isoTime(agent.last_contact),
+            last_work: isoTime(agent.last_work),
+          })),
+        });
+      }),
+  );
+
+  server.registerTool(
+    "get_queue_info",
+    {
+      title: "Get queue info",
+      description:
+        "Shows the instance's task queue: whether it is paused, counts of workers and of pending, waiting-on-dependencies and running tasks, and for each task its name, repo_id, pipeline_number, assigned agent and labels. " +
+        "Use it to explain why a pipeline is stuck pending (no matching agent labels, paused queue, saturated workers). Requires an admin token; Woodpecker answers 403 otherwise.",
+      inputSchema: { instance: instanceParam },
+    },
+    async ({ instance }) =>
+      run(async () => {
+        const client = clientFor(instance);
+        const info = await client.queueInfo();
+        const tasks = (list?: QueueTask[] | null) =>
+          (list ?? []).map((task) => ({
+            name: task.name,
+            repo_id: task.repo_id,
+            pipeline_number: task.pipeline_number || undefined,
+            agent: task.agent_name || undefined,
+            labels: task.labels && Object.keys(task.labels).length ? task.labels : undefined,
+          }));
+        return ok({
+          instance: client.instance.name,
+          paused: info.paused ?? false,
+          stats: info.stats,
+          running: tasks(info.running),
+          pending: tasks(info.pending),
+          waiting_on_deps: tasks(info.waiting_on_deps),
+        });
       }),
   );
 }

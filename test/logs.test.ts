@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { LogEntry } from "../src/client.ts";
-import { decodeLogEntry, renderStepLogs } from "../src/logs.ts";
+import { decodeLogEntry, renderStepLogs, searchStepLogs } from "../src/logs.ts";
 
 const b64 = (text: string) => Buffer.from(text, "utf8").toString("base64");
 
@@ -68,5 +68,37 @@ describe("renderStepLogs", () => {
       const rendered = renderStepLogs(empty, 100);
       expect(rendered).toEqual({ text: "", total: 0, shown: 0 });
     }
+  });
+});
+
+describe("searchStepLogs", () => {
+  const log = (lines: string[]): LogEntry[] =>
+    lines.map((text, i) => ({ line: i + 1, type: 0, data: b64(`${text}\n`) }));
+
+  it("merges overlapping context windows and marks every match", () => {
+    const found = searchStepLogs(log(["a", "err 1", "b", "err 2", "c", "d", "e", "err 3"]), ["err"], 1, 50);
+    expect(found.matches).toBe(3);
+    expect(found.text).toBe(["1- a", "2: err 1", "3- b", "4: err 2", "5- c", "--", "7- e", "8: err 3"].join("\n"));
+  });
+
+  it("stops at maxMatches and reports truncation", () => {
+    const found = searchStepLogs(log(["x", "x", "x"]), ["x"], 0, 2);
+    expect(found).toMatchObject({ matches: 2, truncated: true, total: 3 });
+    expect(found.text).toBe("1: x\n2: x");
+  });
+
+  it("handles an empty or null log", () => {
+    expect(searchStepLogs(null, ["x"], 2, 50)).toEqual({ text: "", total: 0, matches: 0, truncated: false });
+  });
+
+  it("matches any term case-insensitively and treats regex characters literally", () => {
+    const found = searchStepLogs(log(["npm ERR! x", "ok", "Failed (a+)+$", "fine"]), ["err!", "(A+)+$"], 0, 50);
+    expect(found.text).toBe("1: npm ERR! x\n--\n3: Failed (a+)+$");
+  });
+
+  it("clips very long lines in the output", () => {
+    const found = searchStepLogs(log([`hit ${"z".repeat(1000)}`]), ["hit"], 0, 50);
+    expect(found.text.length).toBeLessThan(520);
+    expect(found.text.endsWith("...")).toBe(true);
   });
 });

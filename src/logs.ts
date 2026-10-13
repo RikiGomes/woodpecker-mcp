@@ -26,16 +26,23 @@ export function decodeLogEntry(entry: LogEntry): string {
  * body is normalised to an empty log rather than throwing.
  */
 export function renderStepLogs(entries: LogEntry[] | null | undefined, tail: number): RenderedLogs {
-  const ordered = [...(Array.isArray(entries) ? entries : [])].sort((a, b) =>
-    a.line === undefined || b.line === undefined ? 0 : a.line - b.line,
-  );
-  const lines = ordered.map((entry) => {
-    const text = decodeLogEntry(entry);
-    return entry.type === 2 ? `[exit code] ${text}` : text;
-  });
+  const lines = logLines(entries);
   const shown = tail > 0 ? lines.slice(-tail) : lines;
   return { text: shown.join("\n"), total: lines.length, shown: shown.length };
 }
+
+/** One decoded line per log entry, in line order. */
+function logLines(entries: LogEntry[] | null | undefined): string[] {
+  const ordered = [...(Array.isArray(entries) ? entries : [])].sort((a, b) =>
+    a.line === undefined || b.line === undefined ? 0 : a.line - b.line,
+  );
+  return ordered.map((entry) => {
+    const text = decodeLogEntry(entry);
+    return entry.type === 2 ? `[exit code] ${text}` : text;
+  });
+}
+
+const MAX_MATCH_LINE_CHARS = 500;
 
 export interface LogMatches {
   text: string;
@@ -45,24 +52,24 @@ export interface LogMatches {
 }
 
 /**
- * Greps a step's log for `pattern`, returning each match with `context` lines
- * either side (grep -C style, overlapping windows merged, groups separated by
- * `--`). Lines are prefixed with their 1-based line number so the caller can
- * ask for more context around a specific spot. Stops after `maxMatches`.
+ * grep -C over a step's log: lines containing any of `terms` (case-insensitive
+ * plain text, so no regex can stall the server), numbered, with `context`
+ * lines either side and `--` between non-adjacent groups.
  */
 export function searchStepLogs(
   entries: LogEntry[] | null | undefined,
-  pattern: RegExp,
+  terms: string[],
   context: number,
   maxMatches: number,
 ): LogMatches {
-  const lines = renderStepLogs(entries, 0).text.split("\n");
-  if (lines.length === 1 && lines[0] === "") return { text: "", total: 0, matches: 0, truncated: false };
+  const lines = logLines(entries);
+  const needles = terms.map((term) => term.toLowerCase());
 
   const hits: number[] = [];
   let truncated = false;
   for (let i = 0; i < lines.length; i++) {
-    if (pattern.test(lines[i] ?? "")) {
+    const line = (lines[i] ?? "").toLowerCase();
+    if (needles.some((needle) => line.includes(needle))) {
       if (hits.length === maxMatches) {
         truncated = true;
         break;
@@ -80,7 +87,9 @@ export function searchStepLogs(
   let previous = -1;
   for (const i of [...shown].sort((a, b) => a - b)) {
     if (out.length && i > previous + 1) out.push("--");
-    out.push(`${i + 1}${hitSet.has(i) ? ":" : "-"} ${lines[i]}`);
+    const line = lines[i] ?? "";
+    const clipped = line.length > MAX_MATCH_LINE_CHARS ? `${line.slice(0, MAX_MATCH_LINE_CHARS)}...` : line;
+    out.push(`${i + 1}${hitSet.has(i) ? ":" : "-"} ${clipped}`);
     previous = i;
   }
   return { text: out.join("\n"), total: lines.length, matches: hits.length, truncated };

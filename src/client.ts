@@ -228,8 +228,8 @@ export class WoodpeckerClient {
     return this.get<User>("/api/user");
   }
 
-  listRepos(all = false, name?: string): Promise<Repo[]> {
-    return this.get<Repo[]>("/api/user/repos", { all: all ? "true" : undefined, name });
+  listRepos(all = false): Promise<Repo[]> {
+    return this.get<Repo[]>("/api/user/repos", all ? { all: "true" } : undefined);
   }
 
   feed(): Promise<FeedEntry[] | null> {

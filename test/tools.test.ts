@@ -37,19 +37,20 @@ const PIPELINE = {
   ],
 };
 
+const requested: URL[] = [];
+
 function fakeWoodpecker(url: URL): Response {
+  requested.push(url);
   const json = (payload: unknown) =>
     new Response(JSON.stringify(payload), { status: 200, headers: { "Content-Type": "application/json" } });
   switch (true) {
     case url.pathname === "/api/user":
       return json({ login: "reviewer-bot" });
     case url.pathname === "/api/user/repos":
-      return json(
-        [
-          { id: 7, full_name: "acme/webapp", default_branch: "main", active: true },
-          { id: 8, full_name: "acme/docs", default_branch: "main", active: true },
-        ].filter((repo) => repo.full_name.includes(url.searchParams.get("name") ?? "")),
-      );
+      return json([
+        { id: 7, full_name: "acme/webapp", default_branch: "main", active: true },
+        { id: 8, full_name: "acme/docs", default_branch: "main", active: true },
+      ]);
     case url.pathname === "/api/user/feed":
       return json([
         { repo_id: 8, full_name: "acme/docs", number: 3, status: "success", created: 1_750_000_500 },
@@ -67,6 +68,10 @@ function fakeWoodpecker(url: URL): Response {
       ]);
     case url.pathname === "/api/repos/7/secrets":
       return json([{ name: "docker_password", value: "hunter2", events: ["push"], images: [], note: "" }]);
+    case url.pathname === "/api/repos/7/pipelines/13":
+      return json({ id: 901, number: 13, status: "error", errors: [{ type: "linter", message: "bad yaml" }] });
+    case url.pathname === "/api/repos/9/cron":
+      return new Response("access denied", { status: 403 });
     case url.pathname === "/api/agents":
       return json([{ id: 1, name: "agent-1", platform: "linux/amd64", backend: "docker", capacity: 2, token: "agent-secret-token", last_contact: 1_750_000_000 }]);
     case url.pathname === "/api/queue/info":
@@ -242,25 +247,35 @@ describe("woodpecker MCP tools", () => {
       arguments: { instance: "acme", repo: "acme/webapp", number: 12, step_id: 101, match: "LINE 2", context: 1 },
     });
     const text = textOf(result);
-    expect(text).toContain("1 match for /LINE 2/i in 6 lines");
+    expect(text).toContain(`1 match for "LINE 2" in 6 lines`);
     expect(text).toContain("1- log line 1\n2: log line 2\n3- log line 3");
     expect(text).not.toContain("log line 5");
   });
 
-  it("get_step_logs rejects an invalid match pattern as a tool error", async () => {
+  it("get_step_logs match is plain text with | alternatives, so regex syntax cannot fail", async () => {
     const result = await client.callTool({
       name: "get_step_logs",
-      arguments: { instance: "acme", repo: "acme/webapp", number: 12, step_id: 101, match: "(" },
+      arguments: { instance: "acme", repo: "acme/webapp", number: 12, step_id: 101, match: "(a+)+$|LINE 4", context: 0 },
     });
-    expect(result.isError).toBe(true);
-    expect(textOf(result)).toContain("Invalid `match` pattern");
+    expect(result.isError).toBeFalsy();
+    expect(textOf(result)).toContain('1 match for "(a+)+$" or "LINE 4" in 6 lines\n4: log line 4');
   });
 
-  it("list_repos passes the name filter through", async () => {
-    const result = await client.callTool({ name: "list_repos", arguments: { instance: "acme", name: "docs" } });
-    const text = textOf(result);
-    expect(text).toContain("acme/docs");
-    expect(text).not.toContain("acme/webapp");
+  it("get_step_logs rejects a match with no terms", async () => {
+    const result = await client.callTool({
+      name: "get_step_logs",
+      arguments: { instance: "acme", repo: "acme/webapp", number: 12, step_id: 101, match: " | " },
+    });
+    expect(result.isError).toBe(true);
+    expect(textOf(result)).toContain("at least one non-empty search term");
+  });
+
+  it("list_repos filters by owner/name substring itself instead of Woodpecker's exact name filter", async () => {
+    requested.length = 0;
+    const result = await client.callTool({ name: "list_repos", arguments: { instance: "acme", name: "ACME/WEB" } });
+    const rows = JSON.parse(textOf(result)) as Array<{ full_name: string }>;
+    expect(rows.map((row) => row.full_name)).toEqual(["acme/webapp"]);
+    expect(requested.at(-1)?.searchParams.has("name")).toBe(false);
   });
 
   it("recent_activity filters by status and links each pipeline", async () => {
@@ -289,11 +304,14 @@ describe("woodpecker MCP tools", () => {
     expect(prs.pull_requests).toEqual([{ index: 42, title: "Add feature X" }]);
   });
 
-  it("get_pipeline_config decodes the stored YAML and resolves latest", async () => {
+  it("get_pipeline_config decodes the stored YAML and resolves latest on a branch", async () => {
+    requested.length = 0;
     const result = await client.callTool({
       name: "get_pipeline_config",
-      arguments: { instance: "acme", repo: "acme/webapp", number: "latest" },
+      arguments: { instance: "acme", repo: "acme/webapp", number: "latest", branch: "feature/x" },
     });
+    const latest = requested.find((url) => url.pathname.endsWith("/pipelines/latest"));
+    expect(latest?.searchParams.get("branch")).toBe("feature/x");
     const text = textOf(result);
     expect(text).toContain("pipeline #12 config");
     expect(text).toContain("## .woodpecker/ci.yaml\nsteps:\n  - name: ci");
@@ -309,6 +327,27 @@ describe("woodpecker MCP tools", () => {
     expect(payload.failed_steps).toHaveLength(1);
     expect(payload.failed_steps[0]).toMatchObject({ workflow: "api", step: "ci", step_id: 101, exit_code: 1 });
     expect(payload.failed_steps[0].logs).toContain("(last 2 of 6 lines)\nlog line 5\n[exit code] 1");
+  });
+
+  it("diagnose_pipeline flags a pipeline that failed before any step ran", async () => {
+    const payload = JSON.parse(
+      textOf(
+        await client.callTool({
+          name: "diagnose_pipeline",
+          arguments: { instance: "acme", repo: "acme/webapp", number: 13 },
+        }),
+      ),
+    );
+    expect(payload.failed_steps).toEqual([]);
+    expect(payload.verdict).toContain("without a failed step");
+    expect(payload.verdict).toContain("get_pipeline_config");
+    expect(payload.errors).toEqual([{ type: "linter", message: "bad yaml" }]);
+  });
+
+  it("permission-gated tools surface Woodpecker's 403 as a tool error", async () => {
+    const result = await client.callTool({ name: "list_crons", arguments: { instance: "acme", repo: "9" } });
+    expect(result.isError).toBe(true);
+    expect(textOf(result)).toContain("HTTP 403");
   });
 
   it("list_crons returns variable names but not their values", async () => {

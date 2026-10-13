@@ -103,12 +103,10 @@ function toleratesMissingArgs<Shape extends z.ZodRawShape>(shape: Shape): z.ZodO
 
 const MAX_LOG_MATCHES = 50;
 
-function compilePattern(source: string): RegExp {
-  try {
-    return new RegExp(source, "i");
-  } catch (error) {
-    throw new Error(`Invalid \`match\` pattern: ${error instanceof Error ? error.message : String(error)}`);
-  }
+function matchTerms(match: string): string[] {
+  const terms = match.split("|").map((term) => term.trim()).filter(Boolean);
+  if (terms.length === 0) throw new Error("`match` needs at least one non-empty search term.");
+  return terms;
 }
 
 const CONFIG_HELP =
@@ -195,17 +193,21 @@ export function registerTools(server: McpServer, context: ToolContext): void {
       title: "List repositories",
       description:
         "Lists repositories the instance's token can see, returning id, full_name, default_branch, active and forge_url for each. " +
-        "Active repositories only unless `all` is true; `name` narrows the list to repositories whose name contains it. The list comes back in a single response (this tool takes no paging parameters). " +
+        "Active repositories only unless `all` is true; `name` keeps only repositories whose owner/name contains it (case-insensitive). The list comes back in a single response (this tool takes no paging parameters). " +
         "Use it to discover repositories; it isn't needed when you already know the \"owner/name\" slug, since the other tools accept slugs directly.",
       inputSchema: {
         instance: instanceParam,
         all: z.boolean().optional().describe("Include inactive repositories (default: active only)."),
-        name: z.string().optional().describe("Only repositories whose name contains this text."),
+        name: z.string().optional().describe('Only repositories whose "owner/name" contains this text (case-insensitive).'),
       },
     },
     async ({ instance, all, name }) =>
       run(async () => {
-        const repos = await clientFor(instance).listRepos(all ?? false, name?.trim() || undefined);
+        // Filtered here: Woodpecker's own `name` filter is an exact match on the short name and is ignored with `all`.
+        const needle = name?.trim().toLowerCase();
+        const repos = (await clientFor(instance).listRepos(all ?? false)).filter(
+          (repo) => !needle || (repo.full_name ?? "").toLowerCase().includes(needle),
+        );
         return ok(
           repos.map((repo) => ({
             id: repo.id,
@@ -316,8 +318,9 @@ export function registerTools(server: McpServer, context: ToolContext): void {
       description:
         "Fetches the log output of one step and returns its last `tail` lines (default 100, max 2000) as plain text under a one-line header saying how many of the total lines are shown; exit-code entries are prefixed `[exit code]`. " +
         "`number` must be a concrete pipeline number — \"latest\" is rejected, so take the number from get_pipeline. `step_id` is the numeric id from get_pipeline, not the step name. " +
-        "With `match`, it instead searches the whole log (not just the tail) for a case-insensitive regular expression and returns up to 50 matching lines, " +
-        "each with `context` lines either side and prefixed with its line number (`12:` for a match, `11-` for context); `tail` is ignored then. " +
+        "With `match`, it instead searches the whole log (not just the tail) for lines containing the text, case-insensitive, and returns up to 50 matching lines; " +
+        "`match` is plain text, not a regular expression, with `|` separating alternatives (e.g. \"error|failed\"). Each match comes " +
+        "with `context` lines either side and prefixed with its line number (`12:` for a match, `11-` for context); `tail` is ignored then. " +
         "A skipped step or one with no output returns a short note instead of logs.",
       inputSchema: {
         instance: instanceParam,
@@ -336,7 +339,7 @@ export function registerTools(server: McpServer, context: ToolContext): void {
           .min(1)
           .max(200)
           .optional()
-          .describe('Case-insensitive regular expression to search the whole log for, e.g. "error|failed".'),
+          .describe('Case-insensitive text to search the whole log for; "|" separates alternatives, e.g. "error|failed".'),
         context: z
           .number()
           .int()
@@ -354,19 +357,20 @@ export function registerTools(server: McpServer, context: ToolContext): void {
         if (pipelineNumber === "latest") {
           throw new Error('get_step_logs needs a concrete pipeline number, not "latest".');
         }
-        const pattern = match === undefined ? undefined : compilePattern(match);
+        const terms = match === undefined ? undefined : matchTerms(match);
         const entries = await client.getStepLogs(repoId, pipelineNumber, step_id);
         const rendered = renderStepLogs(entries, tail ?? 100);
         const prefix = `# ${client.instance.name} ${repo} pipeline #${pipelineNumber} step ${step_id} — `;
         if (rendered.total === 0) {
           return ok(`${prefix}no log output (step was skipped or produced no logs).`);
         }
-        if (pattern) {
-          const found = searchStepLogs(entries, pattern, contextLines ?? 2, MAX_LOG_MATCHES);
-          if (found.matches === 0) return ok(`${prefix}no lines match /${match}/i in ${found.total} lines.`);
+        if (terms) {
+          const found = searchStepLogs(entries, terms, contextLines ?? 2, MAX_LOG_MATCHES);
+          const quoted = terms.map((term) => JSON.stringify(term)).join(" or ");
+          if (found.matches === 0) return ok(`${prefix}no lines contain ${quoted} in ${found.total} lines.`);
           const summary =
-            `${found.matches} match${found.matches === 1 ? "" : "es"} for /${match}/i in ${found.total} lines` +
-            (found.truncated ? ` (stopped at ${MAX_LOG_MATCHES}; narrow the pattern for more)` : "");
+            `${found.matches} match${found.matches === 1 ? "" : "es"} for ${quoted} in ${found.total} lines` +
+            (found.truncated ? ` (stopped at ${MAX_LOG_MATCHES}; narrow the search for more)` : "");
           return ok(`${prefix}${summary}\n${found.text}`);
         }
         const header =
@@ -490,7 +494,7 @@ export function registerTools(server: McpServer, context: ToolContext): void {
       title: "Get pipeline config",
       description:
         "Returns the workflow config files (e.g. .woodpecker/*.yaml) exactly as Woodpecker fetched them for one pipeline, as file name plus YAML text. " +
-        "This is the raw config at that commit, before matrix expansion or `when` evaluation. Use it to tell a config problem from a code problem. " +
+        "This is the raw config at that commit, before matrix expansion or `when` evaluation, returned verbatim (including any values written inline in the YAML). Use it to tell a config problem from a code problem. " +
         "`number` may be \"latest\" (default branch, or `branch`).",
       inputSchema: {
         instance: instanceParam,
@@ -577,7 +581,9 @@ export function registerTools(server: McpServer, context: ToolContext): void {
           ...pipelineSummary(pipeline),
           verdict:
             failed.length === 0
-              ? `No failed steps (pipeline status: ${pipeline.status ?? "unknown"}).`
+              ? pipeline.errors?.length || FAILED_STATES.has(pipeline.status ?? "")
+                ? `Pipeline ${pipeline.status ?? "failed"} without a failed step, usually a config or setup problem: see \`errors\`, and get_pipeline_config for the YAML.`
+                : `No failed steps (pipeline status: ${pipeline.status ?? "unknown"}).`
               : `${failed.length} failed step${failed.length === 1 ? "" : "s"}` +
                 (failed.length > MAX_STEPS ? `; showing the first ${MAX_STEPS}` : "") +
                 ".",

@@ -62,11 +62,20 @@ Register in a project's `.mcp.json` (or `claude mcp add`):
   "mcpServers": {
     "woodpecker": {
       "command": "npx",
-      "args": ["-y", "github:RikiGomes/woodpecker-mcp"]
+      "args": ["-y", "github:RikiGomes/woodpecker-mcp"],
+      "env": {
+        "WOODPECKER_URL": "https://ci.example.com",
+        "WOODPECKER_TOKEN": "${WOODPECKER_TOKEN}"
+      }
     }
   }
 }
 ```
+
+`${WOODPECKER_TOKEN}` is expanded from your shell by Claude Code, so the token
+stays out of the committed `.mcp.json`. Alternatively, leave out `env` and put
+the pair in a gitignored `.env.woodpecker` (see above). Without either, the
+server starts with no instances and every tool call fails.
 
 This tracks `main`. To pin a release instead, append its tag, for example
 `github:RikiGomes/woodpecker-mcp#v0.1.0`; tags are listed on the
@@ -89,7 +98,8 @@ Alternatively, clone it once and point at the local build:
 
 ## Development
 
-Node >= 22.18 runs the TypeScript sources directly (type stripping):
+Node >= 22.18 runs the TypeScript sources directly (type stripping); the built
+`dist/` that users run needs only Node 20.12:
 
 ```bash
 npm install

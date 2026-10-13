@@ -98,6 +98,9 @@ describe("loadInstances", () => {
     expect(() =>
       loadInstances({ WOODPECKER_ACME_URL: "ci.example.com", WOODPECKER_ACME_TOKEN: "a" }),
     ).toThrow(/WOODPECKER_ACME_URL/);
+    for (const url of ["ftp://ci.example.com", "file:///etc/passwd", "ci.example.com:8000"]) {
+      expect(() => loadInstances({ WOODPECKER_URL: url, WOODPECKER_TOKEN: "tok" })).toThrow(/http\(s\) base URL/);
+    }
   });
 
   it("ignores unrelated WOODPECKER_* variables", () => {

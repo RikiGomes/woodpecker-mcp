@@ -47,7 +47,7 @@ WOODPECKER_STAGING_TOKEN=...
 
 Tokens come from `<server>/user/cli-and-api` on each Woodpecker instance.
 
-The server also loads a `.env.woodpecker` file from its working directory if present (MCP clients launch stdio servers with the project as working directory). Only `WOODPECKER_*` variables are read from it, and real environment variables take precedence over file values. Keep each URL/token pair in one place: an instance whose URL comes from the file but whose token comes from the environment is refused, so a file in an untrusted checkout cannot send your token elsewhere.
+The server also loads a `.env.woodpecker` file from its working directory if present (MCP clients launch stdio servers with the project as working directory). Only `WOODPECKER_*` variables are read from it, and real environment variables take precedence over file values. Keep each URL/token pair in one place: an instance whose URL comes from the file but whose token comes from the environment is refused, so a file in an untrusted checkout cannot send your token elsewhere, and a file cannot replace an instance your environment already defines. URLs with embedded credentials (`https://user:pass@...`) are rejected; use the token variable.
 
 A plain `http://` URL for a non-local instance works but logs a warning, since the token then travels unencrypted.
 
@@ -122,7 +122,7 @@ npx @modelcontextprotocol/inspector --cli node dist/index.js --method tools/call
 ## Design notes
 
 - **Read-only by contract.** Intended for reviewer agents; there is deliberately no restart/approve/cancel surface.
-- **Log tailing.** Woodpecker returns a step's entire stored log in one response; `get_step_logs` tails (default 100 lines, max 2000) to protect the caller's context window, clips lines over 2000 characters and caps the tail at 100,000 characters. Exit-code entries are labelled `[exit code]`.
+- **Log tailing.** Woodpecker returns a step's entire stored log in one response; `get_step_logs` tails (default 100 lines, max 2000) to protect the caller's context window, clips lines over 2000 characters and caps the tail at 100,000 characters. Upstream responses over 50 MB are refused rather than loaded into memory. Exit-code entries are labelled `[exit code]`.
 - **Untrusted content.** Logs, commit messages, PR titles and pipeline YAML are written by whoever pushed or opened the pull request, which on a public repository can be anyone. An agent reading them should treat them as data, not instructions; the tool descriptions say so too. `get_pipeline_config` returns the YAML verbatim, including anything written inline in it.
 - **Tool annotations.** Every tool is advertised with `readOnlyHint: true`, so clients that support it can allow them without a confirmation prompt.
 - **Slug resolution.** `owner/name` is resolved via `/api/repos/lookup/…` once and cached per process.

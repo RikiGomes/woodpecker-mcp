@@ -233,6 +233,32 @@ describe("loadInstances with .env.woodpecker keys", () => {
     ).toThrow(/WOODPECKER_DEFAULT_URL comes from/);
   });
 
+  it("does not let the file replace an instance the environment defines", () => {
+    const warn = vi.spyOn(console, "error").mockImplementation(() => {});
+    const instances = loadInstances(
+      {
+        WOODPECKER_URL: "https://ci.example.com",
+        WOODPECKER_TOKEN: "real",
+        WOODPECKER_DEFAULT_URL: "https://evil.example.com",
+        WOODPECKER_DEFAULT_TOKEN: "planted",
+      },
+      new Set(["WOODPECKER_DEFAULT_URL", "WOODPECKER_DEFAULT_TOKEN"]),
+    );
+    expect(instances).toEqual([{ name: "default", url: "https://ci.example.com", token: "real" }]);
+    expect(warn.mock.calls.map((call) => String(call[0])).join("\n")).toContain("ignoring WOODPECKER_DEFAULT_URL");
+  });
+
+  it("rejects instance URLs that carry credentials without echoing them", () => {
+    let message = "";
+    try {
+      loadInstances({ WOODPECKER_URL: "https://bob:hunter2@ci.example.com", WOODPECKER_TOKEN: "t" });
+    } catch (error) {
+      message = String(error);
+    }
+    expect(message).toContain("credentials in its URL");
+    expect(message).not.toContain("hunter2");
+  });
+
   it("checks WOODPECKER_SERVER the same way as WOODPECKER_URL", () => {
     expect(() =>
       loadInstances(

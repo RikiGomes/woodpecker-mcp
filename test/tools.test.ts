@@ -104,6 +104,8 @@ function fakeWoodpecker(url: URL): Response {
         status: "failure",
         workflows: [{ id: 3, name: "big", state: "failure", children: [{ id: 102, name: "chatty", state: "failure", exit_code: 1 }] }],
       });
+    case url.pathname === "/api/repos/7/pipelines/14/config":
+      return json([{ name: ".woodpecker/big.yaml", hash: "h", data: b64(`# ${"y".repeat(150_000)}\n`) }]);
     case url.pathname === "/api/repos/7/logs/12/102":
     case url.pathname === "/api/repos/7/logs/14/102":
       return json(Array.from({ length: 100 }, (_, i) => ({ line: i + 1, type: 0, data: b64(`${i + 1} ${"y".repeat(1500)}\n`) })));
@@ -175,6 +177,16 @@ describe("woodpecker MCP tools", () => {
     expect(text.length).toBeLessThan(101_000);
     expect(text.split("\n", 1)[0]).toContain("tail capped by size");
     expect(text).toContain("100 " + "y".repeat(10));
+  });
+
+  it("get_pipeline_config caps a huge config", async () => {
+    const result = await client.callTool({
+      name: "get_pipeline_config",
+      arguments: { instance: "acme", repo: "acme/webapp", number: 14 },
+    });
+    const text = textOf(result);
+    expect(text.length).toBeLessThan(101_000);
+    expect(text).toContain("chars of config clipped");
   });
 
   it("diagnose_pipeline caps each failed step's log tail", async () => {

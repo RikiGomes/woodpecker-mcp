@@ -163,4 +163,32 @@ describe("WoodpeckerClient", () => {
 
     await expect(client.currentUser()).rejects.toThrow(/instance "acme".*ECONNREFUSED/);
   });
+
+  it("refuses a body whose declared length exceeds the cap without reading it", async () => {
+    const fetchImpl = mockFetch(
+      () => new Response("[]", { status: 200, headers: { "Content-Length": String(60 * 1024 * 1024) } }),
+    );
+    const client = new WoodpeckerClient(INSTANCE, fetchImpl);
+    await expect(client.currentUser()).rejects.toThrow(/more than 50 MB/);
+  });
+
+  it("stops reading a streamed body once it passes the cap", async () => {
+    const chunk = new Uint8Array(1024 * 1024).fill(32);
+    let sent = 0;
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        if (sent++ < 60) controller.enqueue(chunk);
+        else controller.close();
+      },
+    });
+    const client = new WoodpeckerClient(INSTANCE, mockFetch(() => new Response(body, { status: 200 })));
+    await expect(client.currentUser()).rejects.toThrow(/more than 50 MB/);
+    expect(sent).toBeLessThan(60);
+  });
+
+  it("keeps the start of a large error body", async () => {
+    const fetchImpl = mockFetch(() => new Response(`denied ${"x".repeat(100_000)}`, { status: 403 }));
+    const client = new WoodpeckerClient(INSTANCE, fetchImpl);
+    await expect(client.currentUser()).rejects.toThrow(/HTTP 403: denied x+/);
+  });
 });

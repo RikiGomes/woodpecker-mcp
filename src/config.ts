@@ -37,6 +37,13 @@ export function loadInstances(
 
   const upsert = (name: string, field: "url" | "token", value: string, key: string) => {
     const entry = partial.get(name) ?? {};
+    const existing = entry[field === "url" ? "urlKey" : "tokenKey"];
+    // e.g. WOODPECKER_DEFAULT_URL from the file vs WOODPECKER_URL from the
+    // environment: the environment wins, so a file cannot replace an instance.
+    if (existing && fileKeys.has(key) && !fileKeys.has(existing)) {
+      console.error(`woodpecker-mcp: ignoring ${key} from .env.woodpecker: ${existing} already sets it.`);
+      return;
+    }
     entry[field] = value;
     entry[field === "url" ? "urlKey" : "tokenKey"] = key;
     partial.set(name, entry);
@@ -70,6 +77,12 @@ export function loadInstances(
         throw new Error(
           `Invalid URL for Woodpecker instance "${name}": "${entry.url}" (from ${envName}_URL). ` +
             "Expected a full base URL like https://ci.example.com.",
+        );
+      }
+      if (parsed.username || parsed.password) {
+        throw new Error(
+          `Woodpecker instance "${name}" (${envName}_URL) has credentials in its URL; ` +
+            "remove them and use the token variable instead.",
         );
       }
       // A .env.woodpecker in an untrusted checkout must not redirect a token

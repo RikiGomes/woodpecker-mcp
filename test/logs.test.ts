@@ -103,6 +103,24 @@ describe("searchStepLogs", () => {
   });
 });
 
+describe("log noise", () => {
+  const entry = (text: string, type = 0, line?: number): LogEntry => ({ line, data: b64(text), type });
+
+  it("strips colour codes, hyperlinks and spinner frames", () => {
+    expect(decodeLogEntry(entry("\x1b[31merror\x1b[0m: \x1b]8;;https://x\x07link\x1b]8;;\x07\n"))).toBe("error: link");
+    expect(decodeLogEntry(entry("10%\r50%\r100% done\n"))).toBe("100% done");
+  });
+
+  it("drops progress entries and collapses repeated lines", () => {
+    const rendered = renderStepLogs(
+      [entry("start", 0, 1), entry("50%", 4, 2), entry("retry", 0, 3), entry("retry", 0, 4), entry("retry", 0, 5), entry("end", 0, 6)],
+      0,
+    );
+    expect(rendered.text).toBe("start\nretry [repeated 3 times]\nend");
+    expect(rendered.total).toBe(3);
+  });
+});
+
 describe("renderStepLogs size limits", () => {
   const log = (lines: string[]): LogEntry[] => lines.map((text, i) => ({ line: i + 1, data: b64(`${text}\n`), type: 0 }));
 

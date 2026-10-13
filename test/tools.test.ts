@@ -171,7 +171,7 @@ describe("woodpecker MCP tools", () => {
   it("get_step_logs caps a huge tail by size and says so", async () => {
     const result = await client.callTool({
       name: "get_step_logs",
-      arguments: { instance: "acme", repo: "acme/webapp", number: 12, step_id: 102 },
+      arguments: { instance: "acme", repo: "acme/webapp", number: 12, step_id: 102, tail: 100 },
     });
     const text = textOf(result);
     expect(text.length).toBeLessThan(101_000);
@@ -253,8 +253,11 @@ describe("woodpecker MCP tools", () => {
       status: "failure",
       message: "Add feature X",
       commit: "abcdef0123",
-      url: "https://ci.example.com/repos/7/pipeline/12",
+      created: "2025-06-15T15:06:40Z",
+      duration_s: 90,
     });
+    expect(payload.pipelines[0]).not.toHaveProperty("url");
+    expect(payload).not.toHaveProperty("instance");
   });
 
   it("get_pipeline lists workflows, steps and failed step ids", async () => {
@@ -269,6 +272,56 @@ describe("woodpecker MCP tools", () => {
     expect(payload.failed_step_ids).toEqual([101]);
     expect(payload.workflows.map((w) => w.name)).toEqual(["api", "portal"]);
     expect(payload.workflows[0]?.steps[0]).toMatchObject({ id: 101, state: "failure" });
+  });
+
+  it("get_pipeline only counts passing steps unless all_steps is set", async () => {
+    const lean = JSON.parse(
+      textOf(await client.callTool({ name: "get_pipeline", arguments: { instance: "acme", repo: "acme/webapp", number: 12 } })),
+    ) as { workflows: Array<{ name: string; passed?: number; skipped?: number; steps: Array<{ id: number }> }> };
+    expect(lean.workflows[0]).toMatchObject({ name: "api", skipped: 1, steps: [{ id: 101 }] });
+    expect(lean.workflows[1]).toMatchObject({ name: "portal", passed: 1, steps: [] });
+
+    const full = JSON.parse(
+      textOf(
+        await client.callTool({
+          name: "get_pipeline",
+          arguments: { instance: "acme", repo: "acme/webapp", number: 12, all_steps: true },
+        }),
+      ),
+    ) as { workflows: Array<{ passed?: number; steps: Array<{ id: number }> }> };
+    expect(full.workflows.flatMap((w) => w.steps.map((step) => step.id))).toEqual([101, 102, 201]);
+    expect(full.workflows[1]).not.toHaveProperty("passed");
+  });
+
+  it("returns compact JSON and only echoes repo_id for slugs", async () => {
+    const bySlug = textOf(
+      await client.callTool({ name: "get_pipeline", arguments: { instance: "acme", repo: "acme/webapp", number: 12 } }),
+    );
+    expect(bySlug).not.toContain("\n");
+    expect(JSON.parse(bySlug)).toMatchObject({ repo_id: 7 });
+    expect(JSON.parse(bySlug)).not.toHaveProperty("instance");
+    const byId = JSON.parse(
+      textOf(await client.callTool({ name: "get_pipeline", arguments: { instance: "acme", repo: "7", number: 12 } })),
+    );
+    expect(byId).not.toHaveProperty("repo_id");
+    expect(byId).not.toHaveProperty("repo");
+  });
+
+  it("keeps every tool response within its size budget on the fixtures", async () => {
+    const budgets: Array<[string, Record<string, unknown>, number]> = [
+      ["list_pipelines", { repo: "acme/webapp" }, 260],
+      ["get_pipeline", { repo: "acme/webapp", number: 12 }, 550],
+      ["diagnose_pipeline", { repo: "acme/webapp", number: 12 }, 550],
+      ["get_step_logs", { repo: "acme/webapp", number: 12, step_id: 101 }, 150],
+      ["recent_activity", {}, 280],
+      ["list_crons", { repo: "acme/webapp" }, 200],
+      ["list_agents", {}, 170],
+      ["get_queue_info", {}, 280],
+    ];
+    for (const [name, args, budget] of budgets) {
+      const text = textOf(await client.callTool({ name, arguments: { instance: "acme", ...args } }));
+      expect(text.length, `${name}: ${text}`).toBeLessThanOrEqual(budget);
+    }
   });
 
   it("get_pipeline accepts the pipeline number as a string", async () => {
@@ -328,7 +381,7 @@ describe("woodpecker MCP tools", () => {
     expect(requested.at(-1)?.searchParams.has("name")).toBe(false);
   });
 
-  it("recent_activity filters by status and links each pipeline", async () => {
+  it("recent_activity filters by status", async () => {
     const result = await client.callTool({
       name: "recent_activity",
       arguments: { instance: "acme", status: "failure" },
@@ -339,7 +392,6 @@ describe("woodpecker MCP tools", () => {
       repo: "acme/webapp",
       number: 12,
       title: "Add feature X",
-      url: "https://ci.example.com/repos/7/pipeline/12",
     });
   });
 

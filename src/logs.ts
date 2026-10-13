@@ -17,7 +17,8 @@ export function decodeLogEntry(entry: LogEntry): string {
  * lines. Woodpecker returns the whole stored log in one response, which for a
  * chatty build can be tens of thousands of lines; tailing protects the
  * caller's context window; a non-positive `tail` disables tailing and returns
- * every line. Exit-code entries (type 2) are labelled so the final status is
+ * every line. Lines longer than 2000 chars are clipped, and `maxChars` drops
+ * the oldest shown lines until the text fits. Exit-code entries (type 2) are labelled so the final status is
  * visible even in a tailed view. Entries without a line number keep their
  * original position instead of being sorted to the front.
  *
@@ -25,10 +26,23 @@ export function decodeLogEntry(entry: LogEntry): string {
  * produced no output (skipped, or failed before emitting), so a non-array
  * body is normalised to an empty log rather than throwing.
  */
-export function renderStepLogs(entries: LogEntry[] | null | undefined, tail: number): RenderedLogs {
+export function renderStepLogs(
+  entries: LogEntry[] | null | undefined,
+  tail: number,
+  maxChars = Number.POSITIVE_INFINITY,
+): RenderedLogs {
   const lines = logLines(entries);
-  const shown = tail > 0 ? lines.slice(-tail) : lines;
+  const shown = (tail > 0 ? lines.slice(-tail) : lines).map((line) => clip(line, MAX_TAIL_LINE_CHARS));
+  // Keep the newest lines when the tail is still too large for the caller's context.
+  let size = shown.reduce((sum, line) => sum + line.length + 1, 0);
+  while (shown.length > 1 && size > maxChars) size -= shown.shift()!.length + 1;
   return { text: shown.join("\n"), total: lines.length, shown: shown.length };
+}
+
+const MAX_TAIL_LINE_CHARS = 2000;
+
+function clip(line: string, max: number): string {
+  return line.length > max ? `${line.slice(0, max)}... [${line.length - max} chars clipped]` : line;
 }
 
 /** One decoded line per log entry, in line order. */
@@ -87,9 +101,7 @@ export function searchStepLogs(
   let previous = -1;
   for (const i of [...shown].sort((a, b) => a - b)) {
     if (out.length && i > previous + 1) out.push("--");
-    const line = lines[i] ?? "";
-    const clipped = line.length > MAX_MATCH_LINE_CHARS ? `${line.slice(0, MAX_MATCH_LINE_CHARS)}...` : line;
-    out.push(`${i + 1}${hitSet.has(i) ? ":" : "-"} ${clipped}`);
+    out.push(`${i + 1}${hitSet.has(i) ? ":" : "-"} ${clip(lines[i] ?? "", MAX_MATCH_LINE_CHARS)}`);
     previous = i;
   }
   return { text: out.join("\n"), total: lines.length, matches: hits.length, truncated };

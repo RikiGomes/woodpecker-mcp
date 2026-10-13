@@ -149,6 +149,13 @@ describe("woodpecker MCP tools", () => {
     ]);
   });
 
+  it("marks every tool read-only for clients", async () => {
+    const { tools } = await client.listTools();
+    for (const tool of tools) {
+      expect(tool.annotations, tool.name).toMatchObject({ readOnlyHint: true, openWorldHint: true });
+    }
+  });
+
   it("list_instances still advertises its parameters in tools/list", async () => {
     // Guards toleratesMissingArgs: the SDK only converts plain object
     // schemas to JSON schema and advertises `{}` for anything else, which

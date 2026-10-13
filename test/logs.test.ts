@@ -98,7 +98,30 @@ describe("searchStepLogs", () => {
 
   it("clips very long lines in the output", () => {
     const found = searchStepLogs(log([`hit ${"z".repeat(1000)}`]), ["hit"], 0, 50);
-    expect(found.text.length).toBeLessThan(520);
-    expect(found.text.endsWith("...")).toBe(true);
+    expect(found.text.length).toBeLessThan(540);
+    expect(found.text).toMatch(/\.\.\. \[504 chars clipped\]$/);
+  });
+});
+
+describe("renderStepLogs size limits", () => {
+  const log = (lines: string[]): LogEntry[] => lines.map((text, i) => ({ line: i + 1, data: b64(`${text}\n`), type: 0 }));
+
+  it("clips a very long line in the tail", () => {
+    const rendered = renderStepLogs(log(["short", "x".repeat(5000)]), 10);
+    expect(rendered.text).toContain("short");
+    expect(rendered.text).toContain("[3000 chars clipped]");
+    expect(rendered.text.length).toBeLessThan(2100);
+  });
+
+  it("drops the oldest lines until the text fits maxChars, keeping the newest", () => {
+    const rendered = renderStepLogs(log(["a".repeat(100), "b".repeat(100), "c".repeat(100)]), 10, 250);
+    expect(rendered.shown).toBe(2);
+    expect(rendered.total).toBe(3);
+    expect(rendered.text.startsWith("b")).toBe(true);
+    expect(rendered.text.endsWith("c")).toBe(true);
+  });
+
+  it("always keeps the last line even when it alone exceeds maxChars", () => {
+    expect(renderStepLogs(log(["a".repeat(300)]), 10, 50).shown).toBe(1);
   });
 });

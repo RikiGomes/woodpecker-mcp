@@ -93,10 +93,10 @@ setTimeout(() => {
     fail(`list_instances did not report the configured instance: ${JSON.stringify(call)}`);
   }
 
-  // stdout is the protocol channel — anything unparseable there would corrupt it.
+  // stdout is the protocol channel: anything unparseable there would corrupt it.
   const noise = stdout.split('\n').filter((l) => l.trim() && !l.trim().startsWith('{'));
   if (noise.length) fail(`non-JSON output on stdout: ${JSON.stringify(noise.slice(0, 3))}`);
 
-  console.log(`smoke: OK on Node ${process.version} — ${names.length} tools, stdout clean`);
+  console.log(`smoke: OK on Node ${process.version}: ${names.length} tools, stdout clean`);
   process.exit(0);
 }, 3000);

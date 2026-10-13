@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/RikiGomes/woodpecker-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/RikiGomes/woodpecker-mcp/actions/workflows/ci.yml)
 
-MCP (Model Context Protocol) server for [Woodpecker CI](https://woodpecker-ci.org). Gives AI agents and MCP clients **read-only** visibility into pipeline status and logs across **multiple self-hosted Woodpecker instances** — so a code reviewer (human or agent) can check whether CI is green and pull the failing step's output without leaving the conversation.
+MCP (Model Context Protocol) server for [Woodpecker CI](https://woodpecker-ci.org). Gives AI agents and MCP clients **read-only** visibility into pipeline status and logs across **multiple self-hosted Woodpecker instances**, so a code reviewer (human or agent) can check whether CI is green and pull the failing step's output without leaving the conversation.
 
 Built against the Woodpecker v3 REST API (verified on v3.16.0; endpoints added since were checked against the v3.19.0 server source). No write operations: the server never restarts, approves, or cancels pipelines.
 
@@ -31,14 +31,14 @@ Repos are addressed as `owner/name` or by numeric Woodpecker repo id. `get_pipel
 
 ## Configuration
 
-Instances are configured via environment variables — one URL/token pair per instance:
+Instances are configured via environment variables, one URL/token pair per instance:
 
 ```bash
 # Single instance (named "default"). WOODPECKER_SERVER (the official CLI var) also works.
 WOODPECKER_URL=https://ci.example.com
 WOODPECKER_TOKEN=<personal access token>
 
-# Or one pair per instance — the name becomes the `instance` argument on every tool:
+# Or one pair per instance; the name becomes the `instance` argument on every tool:
 WOODPECKER_PROD_URL=https://ci.example.com
 WOODPECKER_PROD_TOKEN=...
 WOODPECKER_STAGING_URL=https://ci.staging.example
@@ -104,11 +104,11 @@ npm run build
 npx @modelcontextprotocol/inspector node dist/index.js -e WOODPECKER_URL=https://ci.example.com -e WOODPECKER_TOKEN=<token>
 ```
 
-**The Inspector does not pass your shell environment to the server it launches.** Prefixing the command (`WOODPECKER_URL=… npx @modelcontextprotocol/inspector …`) or `export`ing beforehand sets the variable on the Inspector, not on this server — which then starts with no instances configured. Use one of:
+**The Inspector does not pass your shell environment to the server it launches.** Prefixing the command (`WOODPECKER_URL=… npx @modelcontextprotocol/inspector …`) or `export`ing beforehand sets the variable on the Inspector, not on this server, which then starts with no instances configured. Use one of:
 
-- the `-e KEY=VALUE` flags shown above — note they go **after** `node dist/index.js`, not before;
+- the `-e KEY=VALUE` flags shown above; note they go **after** `node dist/index.js`, not before;
 - the **Environment Variables** fields in the Inspector's connection pane (then Connect / Restart);
-- a `.env.woodpecker` file in the directory you launch from (the name is exact — a plain `.env` is not read).
+- a `.env.woodpecker` file in the directory you launch from (the name is exact: a plain `.env` is not read).
 
 Scripted checks work too, via the Inspector's CLI mode:
 
@@ -126,4 +126,4 @@ npx @modelcontextprotocol/inspector --cli node dist/index.js --method tools/call
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT: see [LICENSE](LICENSE).

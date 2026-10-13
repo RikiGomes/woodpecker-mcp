@@ -143,7 +143,7 @@ export function registerTools(server: McpServer, context: ToolContext): void {
     if (typeof value === "string") {
       const trimmed = value.trim().toLowerCase();
       if (trimmed === "latest") return "latest";
-      // Reject "0"/"00" too — pipeline numbers start at 1.
+      // Reject "0"/"00" too: pipeline numbers start at 1.
       if (/^\d+$/.test(trimmed) && Number(trimmed) >= 1) return Number(trimmed);
     }
     throw new Error(`Invalid pipeline number "${value}": pass a positive integer or "latest".`);
@@ -317,7 +317,7 @@ export function registerTools(server: McpServer, context: ToolContext): void {
       title: "Get step logs",
       description:
         "Fetches the log output of one step and returns its last `tail` lines (default 100, max 2000) as plain text under a one-line header saying how many of the total lines are shown; exit-code entries are prefixed `[exit code]`. " +
-        "`number` must be a concrete pipeline number — \"latest\" is rejected, so take the number from get_pipeline. `step_id` is the numeric id from get_pipeline, not the step name. " +
+        "`number` must be a concrete pipeline number (\"latest\" is rejected), so take the number from get_pipeline. `step_id` is the numeric id from get_pipeline, not the step name. " +
         "With `match`, it instead searches the whole log (not just the tail) for lines containing the text, case-insensitive, and returns up to 50 matching lines; " +
         "`match` is plain text, not a regular expression, with `|` separating alternatives (e.g. \"error|failed\"). Each match comes " +
         "with `context` lines either side and prefixed with its line number (`12:` for a match, `11-` for context); `tail` is ignored then. " +
@@ -360,7 +360,7 @@ export function registerTools(server: McpServer, context: ToolContext): void {
         const terms = match === undefined ? undefined : matchTerms(match);
         const entries = await client.getStepLogs(repoId, pipelineNumber, step_id);
         const rendered = renderStepLogs(entries, tail ?? 100);
-        const prefix = `# ${client.instance.name} ${repo} pipeline #${pipelineNumber} step ${step_id} — `;
+        const prefix = `# ${client.instance.name} ${repo} pipeline #${pipelineNumber} step ${step_id}: `;
         if (rendered.total === 0) {
           return ok(`${prefix}no log output (step was skipped or produced no logs).`);
         }
@@ -376,7 +376,7 @@ export function registerTools(server: McpServer, context: ToolContext): void {
         const header =
           prefix +
           `showing ${rendered.shown} of ${rendered.total} lines` +
-          (rendered.shown < rendered.total ? " (tail — increase `tail` for more)" : "");
+          (rendered.shown < rendered.total ? " (tail; increase `tail` for more)" : "");
         return ok(`${header}\n${rendered.text}`);
       }),
   );

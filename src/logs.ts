@@ -15,7 +15,7 @@ export function decodeLogEntry(entry: LogEntry): string {
 /**
  * Renders a step's log entries as plain text, keeping only the last `tail`
  * lines. Woodpecker returns the whole stored log in one response, which for a
- * chatty build can be tens of thousands of lines — tailing protects the
+ * chatty build can be tens of thousands of lines; tailing protects the
  * caller's context window; a non-positive `tail` disables tailing and returns
  * every line. Exit-code entries (type 2) are labelled so the final status is
  * visible even in a tailed view. Entries without a line number keep their

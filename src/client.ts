@@ -18,7 +18,7 @@ export interface PipelineError {
 }
 
 export interface Step {
-  /** Global step id — this is the id the logs endpoint expects. */
+  /** Global step id; this is the id the logs endpoint expects. */
   id: number;
   name?: string;
   state?: string;
@@ -41,7 +41,7 @@ export interface Workflow {
 
 export interface Pipeline {
   id: number;
-  /** Per-repo pipeline number — used in URLs, distinct from the global id. */
+  /** Per-repo pipeline number, used in URLs, distinct from the global id. */
   number: number;
   status?: string;
   event?: string;
@@ -290,7 +290,7 @@ export class WoodpeckerClient {
     return this.get<LogEntry[]>(`/api/repos/${repoId}/logs/${pipelineNumber}/${stepId}`);
   }
 
-  /** Woodpecker UI link for a pipeline — handy for humans reading agent output. */
+  /** Woodpecker UI link for a pipeline, handy for humans reading agent output. */
   pipelineUrl(repoId: number, pipelineNumber: number | "latest"): string {
     return `${this.instance.url}/repos/${repoId}/pipeline/${pipelineNumber}`;
   }
@@ -325,7 +325,7 @@ export class WoodpeckerClient {
       // if a misconfigured proxy/server echoes the Authorization header back.
       const body = this.instance.token ? raw.split(this.instance.token).join("[redacted]") : raw;
       throw new WoodpeckerApiError(
-        `${this.instance.name}: GET ${url.pathname} returned HTTP ${response.status}${body ? ` — ${body}` : ""}`,
+        `${this.instance.name}: GET ${url.pathname} returned HTTP ${response.status}${body ? `: ${body}` : ""}`,
         response.status,
       );
     }
@@ -335,7 +335,7 @@ export class WoodpeckerClient {
       // e.g. a reverse proxy answering 200 with an HTML error/login page.
       throw new WoodpeckerApiError(
         `${this.instance.name}: GET ${url.pathname} returned a non-JSON response body ` +
-          `— is ${url.origin} really a Woodpecker server?`,
+          `(is ${url.origin} really a Woodpecker server?)`,
         response.status,
       );
     }

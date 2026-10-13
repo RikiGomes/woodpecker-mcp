@@ -12,6 +12,15 @@ dist/
 # Logs & coverage
 *.log
 coverage/
+
+# Personal Claude Code kit (synced locally from claude-dotfiles, not part of this project)
+.claude/bin/
+.claude/hooks/
+.claude/bitwarden.conf
+.claude/cloud-tools
+.claude/gitignore-credentials
+.claude/settings.json
+
 # >>> claude-dotfiles: credential files (synced; edit in claude-dotfiles) >>>
 .env
 .env.*

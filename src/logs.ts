@@ -18,8 +18,8 @@ export function decodeLogEntry(entry: LogEntry): string {
  * chatty build can be tens of thousands of lines; tailing protects the
  * caller's context window; a non-positive `tail` disables tailing and returns
  * every line. Lines longer than 2000 chars are clipped, and `maxChars` drops
- * the oldest shown lines until the text fits. Exit-code entries (type 2) are labelled so the final status is
- * visible even in a tailed view. Entries without a line number keep their
+ * the oldest shown lines until the text fits. Exit-code entries (type 2) are
+ * labelled so the final status is visible even in a tailed view. Entries without a line number keep their
  * original position instead of being sorted to the front.
  *
  * The logs endpoint returns HTTP 200 with body `null` for a step that

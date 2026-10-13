@@ -75,8 +75,8 @@ export function loadInstances(
       // that came from the real environment to a URL of its choosing.
       if (fileKeys.has(entry.urlKey!) && !fileKeys.has(entry.tokenKey!)) {
         const message =
-          `${entry.urlKey} comes from .env.woodpecker but ${entry.tokenKey} from the process environment; ` +
-          "set both in the same place.";
+          `${entry.urlKey} comes from .env.woodpecker but ${entry.tokenKey} ` +
+          "from the process environment; set both in the same place.";
         if (name === "default") throw new Error(`Refusing Woodpecker instance "default": ${message}`);
         console.error(`woodpecker-mcp: ignoring instance "${name}": ${message}`);
         continue;
@@ -131,7 +131,8 @@ export function loadEnvFileIfPresent(
     );
     return added;
   }
-  const before = new Set(Object.keys(process.env));
+  // Upper-cased: process.env is case-insensitive on Windows.
+  const before = new Set(Object.keys(process.env).map((key) => key.toUpperCase()));
   try {
     load(path);
   } catch (error) {
@@ -140,7 +141,9 @@ export function loadEnvFileIfPresent(
         "continuing with the process environment only.",
     );
   }
-  for (const key of Object.keys(process.env)) if (!before.has(key)) added.add(key);
+  for (const key of Object.keys(process.env)) {
+    if (!before.has(key.toUpperCase())) added.add(key.toUpperCase());
+  }
   return added;
 }
 

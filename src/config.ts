@@ -81,6 +81,12 @@ export function loadInstances(
             "Expected a full base URL like https://ci.example.com.",
         );
       }
+      if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
+        throw new Error(
+          `Invalid URL for Woodpecker instance "${name}" (from ${entry.urlKey}): ` +
+            "expected an http(s) base URL like https://ci.example.com.",
+        );
+      }
       if (parsed.username || parsed.password) {
         throw new Error(
           `Woodpecker instance "${name}" (${envName}_URL) has credentials in its URL; ` +

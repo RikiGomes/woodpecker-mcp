@@ -21,16 +21,16 @@ printf '%s\n' \
 
 Flows worth driving:
 - Config edge cases: set env pairs (`WOODPECKER_<NAME>_URL/_TOKEN`) and watch
-  stderr — incomplete named pairs warn, incomplete/malformed default pair exits 1.
+  stderr: incomplete named pairs warn, incomplete/malformed default pair exits 1.
 - Tool behavior against a fake Woodpecker: a throwaway
   `node http.createServer` on 127.0.0.1 works fine as `WOODPECKER_URL`
   (e.g. return HTML with status 200 to exercise the non-JSON body path).
-- `tools/list` output shows the advertised JSON schemas — check them after
+- `tools/list` output shows the advertised JSON schemas; check them after
   touching `inputSchema` definitions.
 
 Gotchas:
 - The server keeps running after the piped stdin closes; give it `sleep 1`
   after the last message and kill it, or `tail -1` the captured stdout.
 - stdout is protocol-only; all human-readable status goes to stderr.
-- `.env.woodpecker` is loaded from the *working directory* — run from a
+- `.env.woodpecker` is loaded from the *working directory*, so run from a
   temp dir to test that path.

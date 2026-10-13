@@ -34,3 +34,8 @@ console.error(
     instances.map((i) => i.name).join(", ") || "(none configured)"
   }`,
 );
+if (instances.length === 0) {
+  console.error(
+    "woodpecker-mcp: set WOODPECKER_URL and WOODPECKER_TOKEN in the client's env block or in .env.woodpecker; every tool fails until then.",
+  );
+}

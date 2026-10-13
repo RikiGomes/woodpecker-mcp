@@ -29,7 +29,7 @@ describe("loadInstances", () => {
     const instances = loadInstances({
       WOODPECKER_ACME_URL: "https://ci.example.com",
       WOODPECKER_ACME_TOKEN: "a",
-      WOODPECKER_SIDE_PROJECT_URL: "https://ci.side.dev",
+      WOODPECKER_SIDE_PROJECT_URL: "https://ci.side.example",
       WOODPECKER_SIDE_PROJECT_TOKEN: "b",
     });
     expect(instances.map((i) => i.name)).toEqual(["acme", "side_project"]);
@@ -37,9 +37,9 @@ describe("loadInstances", () => {
 
   it("mixes the default instance with named ones", () => {
     const instances = loadInstances({
-      WOODPECKER_URL: "https://ci.main.dev",
+      WOODPECKER_URL: "https://ci.main.example",
       WOODPECKER_TOKEN: "a",
-      WOODPECKER_OTHER_URL: "https://ci.other.dev",
+      WOODPECKER_OTHER_URL: "https://ci.other.example",
       WOODPECKER_OTHER_TOKEN: "b",
     });
     expect(instances.map((i) => i.name)).toEqual(["default", "other"]);
@@ -55,7 +55,7 @@ describe("loadInstances", () => {
   it("skips incomplete named pairs with a stderr warning instead of throwing", () => {
     const warn = vi.spyOn(console, "error").mockImplementation(() => {});
     try {
-      // WOODPECKER_GITHUB_URL is a real Woodpecker *server* deployment variable —
+      // WOODPECKER_GITHUB_URL is a real Woodpecker *server* deployment variable;
       // it must not kill an MCP server that happens to share the environment.
       const instances = loadInstances({
         WOODPECKER_GITHUB_URL: "https://github.com",

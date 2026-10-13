@@ -4,11 +4,6 @@ node_modules/
 # Build output
 dist/
 
-# Environment & secrets — never commit tokens
-.env
-.env.*
-!.env.example
-
 # Logs & coverage
 *.log
 coverage/

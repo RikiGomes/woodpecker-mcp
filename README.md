@@ -62,11 +62,15 @@ Register in a project's `.mcp.json` (or `claude mcp add`):
   "mcpServers": {
     "woodpecker": {
       "command": "npx",
-      "args": ["-y", "github:RikiGomes/woodpecker-mcp"]
+      "args": ["-y", "github:RikiGomes/woodpecker-mcp#v0.1.0"]
     }
   }
 }
 ```
+
+The `#v0.1.0` suffix pins a release tag, so the server only changes when you
+bump it. Drop the suffix to track `main`. Releases are listed on the
+[releases page](https://github.com/RikiGomes/woodpecker-mcp/releases).
 
 Alternatively, clone it once and point at the local build:
 

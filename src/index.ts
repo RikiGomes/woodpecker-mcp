@@ -1,11 +1,13 @@
 #!/usr/bin/env node
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { loadEnvFileIfPresent, loadInstances } from "./config.ts";
 import { registerTools } from "./tools.ts";
 
-const SERVER_VERSION = "0.1.0";
+// src/ and dist/ both sit one level below the package root.
+const SERVER_VERSION: string = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")).version;
 
 // Optional dotenv support: MCP clients launch stdio servers with the project
 // as working directory, so a gitignored .env.woodpecker there is a convenient

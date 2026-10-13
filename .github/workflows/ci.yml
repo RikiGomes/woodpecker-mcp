@@ -26,13 +26,13 @@ jobs:
       fail-fast: false
       matrix:
         # 20.12 is the floor declared in package.json engines (the version that
-        # introduced process.loadEnvFile); the others guard against regressions
+        # introduced util.parseEnv); the others guard against regressions
         # on current runtimes.
         node-version: ['20.12', '22', '24']
     name: test (node ${{ matrix.node-version }})
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: ${{ matrix.node-version }}
           cache: npm
@@ -41,7 +41,7 @@ jobs:
       - run: npm run check
       # vitest 4 bundles rolldown, which requires Node ^20.19 || >=22.12, so it
       # cannot run on the 20.12 floor. The floor is covered by `npm run smoke`
-      # below, which drives the built server over stdio using only built-ins —
+      # below, which drives the built server over stdio using only built-ins:
       # a more faithful check of the shipped artifact than the unit tests.
       - if: matrix.node-version != '20.12'
         run: npm test
@@ -51,12 +51,12 @@ jobs:
   audit:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '24'
           cache: npm
       - run: npm ci --ignore-scripts
-      # Runtime dependencies only — dev-tool advisories should not block a
+      # Runtime dependencies only: dev-tool advisories should not block a
       # release of a server that never ships them.
       - run: npm audit --omit=dev --audit-level=high

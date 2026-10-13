@@ -5,10 +5,12 @@
 // the vitest toolchain cannot (rolldown requires ^20.19 || >=22.12). This is
 // what validates the `engines` floor in CI.
 import { spawn } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
+const VERSION = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).version;
 const EXPECTED = [
   'diagnose_pipeline',
   'get_pipeline',
@@ -78,6 +80,9 @@ setTimeout(() => {
       }
     })
     .filter(Boolean);
+
+  const advertised = responses.find((r) => r.id === 1)?.result?.serverInfo?.version;
+  if (advertised !== VERSION) fail(`server advertised version ${advertised}, package.json says ${VERSION}`);
 
   const tools = responses.find((r) => r.id === 2)?.result?.tools;
   if (!Array.isArray(tools)) fail('tools/list returned no tools array');

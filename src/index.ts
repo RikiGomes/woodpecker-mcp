@@ -9,9 +9,9 @@ const SERVER_VERSION = "0.1.0";
 
 // Optional dotenv support: MCP clients launch stdio servers with the project
 // as working directory, so a gitignored .env.woodpecker there is a convenient
-// place for instance credentials. Real environment variables take precedence
-// over file values (Node --env-file semantics). A missing/unreadable file or
-// an old Node without process.loadEnvFile degrades to a stderr warning.
+// place for instance credentials. Only WOODPECKER_* keys are read, and real
+// environment variables take precedence over file values. A missing or
+// unreadable file degrades to a stderr warning.
 const fileKeys = loadEnvFileIfPresent(join(process.cwd(), ".env.woodpecker"));
 
 let instances;

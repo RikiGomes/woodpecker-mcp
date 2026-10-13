@@ -121,6 +121,20 @@ describe("renderStepLogs size limits", () => {
     expect(rendered.text.endsWith("c")).toBe(true);
   });
 
+  it("does not split a surrogate pair when clipping", () => {
+    const rendered = renderStepLogs(log(["x".repeat(1999) + "😀" + "z".repeat(10)]), 10);
+    expect(rendered.text.startsWith("x".repeat(1999) + "...")).toBe(true);
+    expect(rendered.text).not.toMatch(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/);
+  });
+
+  it("caps the total output of a search and marks it truncated", () => {
+    const lines = Array.from({ length: 40 }, (_, i) => `hit ${i} ${"q".repeat(400)}`);
+    const found = searchStepLogs(log(lines), ["hit"], 0, 50, 2000);
+    expect(found.text.length).toBeLessThanOrEqual(2000);
+    expect(found.truncated).toBe(true);
+    expect(found.text.startsWith("1: hit 0")).toBe(true);
+  });
+
   it("always keeps the last line even when it alone exceeds maxChars", () => {
     expect(renderStepLogs(log(["a".repeat(300)]), 10, 50).shown).toBe(1);
   });

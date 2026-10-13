@@ -42,7 +42,10 @@ export function renderStepLogs(
 const MAX_TAIL_LINE_CHARS = 2000;
 
 function clip(line: string, max: number): string {
-  return line.length > max ? `${line.slice(0, max)}... [${line.length - max} chars clipped]` : line;
+  if (line.length <= max) return line;
+  // Don't split a surrogate pair (emoji and other astral characters).
+  const cut = /[\uD800-\uDBFF]/.test(line[max - 1] ?? "") ? max - 1 : max;
+  return `${line.slice(0, cut)}... [${line.length - cut} chars clipped]`;
 }
 
 /** One decoded line per log entry, in line order. */
@@ -68,13 +71,15 @@ export interface LogMatches {
 /**
  * grep -C over a step's log: lines containing any of `terms` (case-insensitive
  * plain text, so no regex can stall the server), numbered, with `context`
- * lines either side and `--` between non-adjacent groups.
+ * lines either side and `--` between non-adjacent groups. Stops at
+ * `maxMatches` hits or `maxChars` of output, whichever comes first.
  */
 export function searchStepLogs(
   entries: LogEntry[] | null | undefined,
   terms: string[],
   context: number,
   maxMatches: number,
+  maxChars = Number.POSITIVE_INFINITY,
 ): LogMatches {
   const lines = logLines(entries);
   const needles = terms.map((term) => term.toLowerCase());
@@ -98,10 +103,16 @@ export function searchStepLogs(
     for (let i = Math.max(0, hit - context); i <= Math.min(lines.length - 1, hit + context); i++) shown.add(i);
   }
   const out: string[] = [];
+  let size = 0;
   let previous = -1;
   for (const i of [...shown].sort((a, b) => a - b)) {
-    if (out.length && i > previous + 1) out.push("--");
-    out.push(`${i + 1}${hitSet.has(i) ? ":" : "-"} ${clip(lines[i] ?? "", MAX_MATCH_LINE_CHARS)}`);
+    const row = `${out.length && i > previous + 1 ? "--\n" : ""}${i + 1}${hitSet.has(i) ? ":" : "-"} ${clip(lines[i] ?? "", MAX_MATCH_LINE_CHARS)}`;
+    if (out.length && size + row.length + 1 > maxChars) {
+      truncated = true;
+      break;
+    }
+    out.push(row);
+    size += row.length + 1;
     previous = i;
   }
   return { text: out.join("\n"), total: lines.length, matches: hits.length, truncated };

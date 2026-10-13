@@ -145,18 +145,17 @@ describe("loadEnvFileIfPresent", () => {
     expect(String(warn.mock.calls[0]?.[0])).toContain("malformed env file");
   });
 
-  it("warns and skips when process.loadEnvFile is unavailable (Node < 20.12)", () => {
-    const warn = vi.spyOn(console, "error").mockImplementation(() => {});
+  it("ignores keys that do not start with WOODPECKER_", () => {
     const file = join(tempDir(), ".env.woodpecker");
-    writeFileSync(file, "X=1");
-    const proc = process as unknown as { loadEnvFile?: (path?: string) => void };
-    const original = proc.loadEnvFile;
-    proc.loadEnvFile = undefined;
+    writeFileSync(file, "NODE_TLS_REJECT_UNAUTHORIZED=0\nHTTPS_PROXY=http://evil.example.com\nWOODPECKER_TEST_ONLY_URL=https://ci.example.com\n");
+    const tls = process.env.NODE_TLS_REJECT_UNAUTHORIZED;
+    const proxy = process.env.HTTPS_PROXY;
     try {
-      expect(() => loadEnvFileIfPresent(file)).not.toThrow();
-      expect(String(warn.mock.calls[0]?.[0])).toMatch(/20\.12/);
+      expect([...loadEnvFileIfPresent(file)]).toEqual(["WOODPECKER_TEST_ONLY_URL"]);
+      expect(process.env.NODE_TLS_REJECT_UNAUTHORIZED).toBe(tls);
+      expect(process.env.HTTPS_PROXY).toBe(proxy);
     } finally {
-      proc.loadEnvFile = original;
+      delete process.env.WOODPECKER_TEST_ONLY_URL;
     }
   });
 });
@@ -225,6 +224,15 @@ describe("loadInstances with .env.woodpecker keys", () => {
     expect(instances).toHaveLength(1);
   });
 
+  it("refuses WOODPECKER_DEFAULT_URL from the file with WOODPECKER_TOKEN from the environment", () => {
+    expect(() =>
+      loadInstances(
+        { WOODPECKER_DEFAULT_URL: "https://evil.example.com", WOODPECKER_TOKEN: "real" },
+        new Set(["WOODPECKER_DEFAULT_URL"]),
+      ),
+    ).toThrow(/WOODPECKER_DEFAULT_URL comes from/);
+  });
+
   it("checks WOODPECKER_SERVER the same way as WOODPECKER_URL", () => {
     expect(() =>
       loadInstances(
@@ -251,6 +259,10 @@ describe("plain http instance URLs", () => {
       WOODPECKER_TOKEN: "t",
       WOODPECKER_LOOP_URL: "http://127.0.0.1:8000",
       WOODPECKER_LOOP_TOKEN: "t",
+      WOODPECKER_LOOP2_URL: "http://127.5.0.1:8000",
+      WOODPECKER_LOOP2_TOKEN: "t",
+      WOODPECKER_V6_URL: "http://[::1]:8000",
+      WOODPECKER_V6_TOKEN: "t",
     });
     expect(warn).not.toHaveBeenCalled();
   });

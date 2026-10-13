@@ -1,4 +1,5 @@
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
+import * as util from "node:util";
 
 export interface WoodpeckerInstance {
   /** Short identifier used as the `instance` argument on every tool. */
@@ -10,7 +11,7 @@ export interface WoodpeckerInstance {
 }
 
 const NAMED_VAR = /^WOODPECKER_([A-Z0-9_]+)_(URL|TOKEN)$/;
-const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
+const isLoopback = (host: string) => host === "localhost" || host === "[::1]" || /^127\.\d+\.\d+\.\d+$/.test(host);
 
 /**
  * Builds the instance registry from environment variables.
@@ -81,7 +82,7 @@ export function loadInstances(
         console.error(`woodpecker-mcp: ignoring instance "${name}": ${message}`);
         continue;
       }
-      if (parsed.protocol === "http:" && !LOOPBACK_HOSTS.has(parsed.hostname)) {
+      if (parsed.protocol === "http:" && !isLoopback(parsed.hostname)) {
         console.error(
           `woodpecker-mcp: instance "${name}" uses plain http (${parsed.origin}); its token is sent unencrypted.`,
         );
@@ -110,39 +111,33 @@ export function loadInstances(
 }
 
 /**
- * Loads a dotenv-style file into `process.env` if it exists, without ever
- * crashing the server: `process.loadEnvFile` only exists from Node 20.12, and
- * an unreadable file (e.g. a directory of the same name) throws. Both cases
- * degrade to a stderr warning. Existing environment variables keep precedence
- * over file values (Node --env-file semantics). Returns the variable names
- * the file added, so loadInstances can tell where each half of a pair came from.
+ * Loads the `WOODPECKER_*` variables of a dotenv-style file into `process.env`
+ * if it exists, without ever crashing the server. Other keys are ignored: a
+ * file in an untrusted checkout must not set e.g. NODE_TLS_REJECT_UNAUTHORIZED
+ * or a proxy. Existing environment variables keep precedence over file values.
+ * An unreadable or malformed file degrades to a stderr warning. Returns the variable names the file set,
+ * so loadInstances can tell where each half of a pair came from.
  */
 export function loadEnvFileIfPresent(
   path: string,
-  loader?: (path?: string) => void,
+  parse: (content: string) => Record<string, string | undefined> = util.parseEnv,
 ): Set<string> {
   const added = new Set<string>();
   if (!existsSync(path)) return added;
-  const load = loader ?? (process as { loadEnvFile?: (path?: string) => void }).loadEnvFile;
-  if (typeof load !== "function") {
-    console.error(
-      `woodpecker-mcp: skipping ${path}: process.loadEnvFile needs Node >= 20.12 ` +
-        `(running ${process.version}).`,
-    );
-    return added;
-  }
-  // Upper-cased: process.env is case-insensitive on Windows.
-  const before = new Set(Object.keys(process.env).map((key) => key.toUpperCase()));
+  let parsed: Record<string, string | undefined>;
   try {
-    load(path);
+    parsed = parse(readFileSync(path, "utf8"));
   } catch (error) {
     console.error(
       `woodpecker-mcp: failed to load ${path}: ${error instanceof Error ? error.message : String(error)}; ` +
         "continuing with the process environment only.",
     );
+    return added;
   }
-  for (const key of Object.keys(process.env)) {
-    if (!before.has(key.toUpperCase())) added.add(key.toUpperCase());
+  for (const [key, value] of Object.entries(parsed)) {
+    if (!key.startsWith("WOODPECKER_") || value === undefined || process.env[key] !== undefined) continue;
+    process.env[key] = value;
+    added.add(key);
   }
   return added;
 }

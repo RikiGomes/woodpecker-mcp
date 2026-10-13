@@ -47,7 +47,7 @@ WOODPECKER_STAGING_TOKEN=...
 
 Tokens come from `<server>/user/cli-and-api` on each Woodpecker instance.
 
-The server also loads a `.env.woodpecker` file from its working directory if present (MCP clients launch stdio servers with the project as working directory). Real environment variables take precedence over file values. Keep each URL/token pair in one place: an instance whose URL comes from the file but whose token comes from the environment is refused, so a file in an untrusted checkout cannot send your token elsewhere.
+The server also loads a `.env.woodpecker` file from its working directory if present (MCP clients launch stdio servers with the project as working directory). Only `WOODPECKER_*` variables are read from it, and real environment variables take precedence over file values. Keep each URL/token pair in one place: an instance whose URL comes from the file but whose token comes from the environment is refused, so a file in an untrusted checkout cannot send your token elsewhere.
 
 A plain `http://` URL for a non-local instance works but logs a warning, since the token then travels unencrypted.
 

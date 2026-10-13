@@ -97,6 +97,16 @@ function fakeWoodpecker(url: URL): Response {
       }));
       return json([...entries, { line: 6, type: 2, data: b64("1\n") }]);
     }
+    case url.pathname === "/api/repos/7/pipelines/14":
+      return json({
+        id: 902,
+        number: 14,
+        status: "failure",
+        workflows: [{ id: 3, name: "big", state: "failure", children: [{ id: 102, name: "chatty", state: "failure", exit_code: 1 }] }],
+      });
+    case url.pathname === "/api/repos/7/logs/12/102":
+    case url.pathname === "/api/repos/7/logs/14/102":
+      return json(Array.from({ length: 100 }, (_, i) => ({ line: i + 1, type: 0, data: b64(`${i + 1} ${"y".repeat(1500)}\n`) })));
     default:
       return new Response("not found", { status: 404 });
   }
@@ -154,6 +164,27 @@ describe("woodpecker MCP tools", () => {
     for (const tool of tools) {
       expect(tool.annotations, tool.name).toMatchObject({ readOnlyHint: true, openWorldHint: true });
     }
+  });
+
+  it("get_step_logs caps a huge tail by size and says so", async () => {
+    const result = await client.callTool({
+      name: "get_step_logs",
+      arguments: { instance: "acme", repo: "acme/webapp", number: 12, step_id: 102 },
+    });
+    const text = textOf(result);
+    expect(text.length).toBeLessThan(101_000);
+    expect(text.split("\n", 1)[0]).toContain("tail capped by size");
+    expect(text).toContain("100 " + "y".repeat(10));
+  });
+
+  it("diagnose_pipeline caps each failed step's log tail", async () => {
+    const result = await client.callTool({
+      name: "diagnose_pipeline",
+      arguments: { instance: "acme", repo: "acme/webapp", number: 14, tail: 200 },
+    });
+    const payload = JSON.parse(textOf(result)) as { failed_steps: Array<{ logs: string }> };
+    expect(payload.failed_steps[0]!.logs.length).toBeLessThan(21_000);
+    expect(payload.failed_steps[0]!.logs).toContain("100 " + "y".repeat(10));
   });
 
   it("list_instances still advertises its parameters in tools/list", async () => {

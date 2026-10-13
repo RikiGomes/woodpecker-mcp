@@ -377,12 +377,12 @@ export function registerTools(server: McpServer, context: ToolContext): void {
           return ok(`${prefix}no log output (step was skipped or produced no logs).`);
         }
         if (terms) {
-          const found = searchStepLogs(entries, terms, contextLines ?? 2, MAX_LOG_MATCHES);
+          const found = searchStepLogs(entries, terms, contextLines ?? 2, MAX_LOG_MATCHES, MAX_LOG_CHARS);
           const quoted = terms.map((term) => JSON.stringify(term)).join(" or ");
           if (found.matches === 0) return ok(`${prefix}no lines contain ${quoted} in ${found.total} lines.`);
           const summary =
             `${found.matches} match${found.matches === 1 ? "" : "es"} for ${quoted} in ${found.total} lines` +
-            (found.truncated ? ` (stopped at ${MAX_LOG_MATCHES}; narrow the search for more)` : "");
+            (found.truncated ? ` (stopped at ${MAX_LOG_MATCHES} matches or ${MAX_LOG_CHARS} characters; narrow the search for more)` : "");
           return ok(`${prefix}${summary}\n${found.text}`);
         }
         const header =

@@ -42,8 +42,7 @@ easy to break and not obvious from any single file.
   floor in `engines` first if you want newer types.
 - **The version lives only in `package.json`.** The server reads it at
   startup and smoke checks the advertised value. To release, bump it in a PR,
-  then tag the merge commit `vX.Y.Z` and publish a GitHub release; the README
-  install snippet pins that tag.
+  then tag the merge commit `vX.Y.Z` and publish a GitHub release.
 - Actions are pinned to a full commit SHA with the tag in a trailing comment;
   Dependabot keeps both current.
 

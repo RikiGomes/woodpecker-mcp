@@ -91,7 +91,10 @@ describe("loadInstances", () => {
   it("rejects malformed instance URLs at load time", () => {
     expect(() =>
       loadInstances({ WOODPECKER_URL: "not a url", WOODPECKER_TOKEN: "tok" }),
-    ).toThrow(/Invalid URL.*not a url/);
+    ).toThrow(/Invalid URL.*WOODPECKER_URL/);
+    expect(() =>
+      loadInstances({ WOODPECKER_URL: "https://bob:hunter2@bad host", WOODPECKER_TOKEN: "tok" }),
+    ).not.toThrow(/hunter2/);
     expect(() =>
       loadInstances({ WOODPECKER_ACME_URL: "ci.example.com", WOODPECKER_ACME_TOKEN: "a" }),
     ).toThrow(/WOODPECKER_ACME_URL/);
@@ -145,18 +148,17 @@ describe("loadEnvFileIfPresent", () => {
     expect(String(warn.mock.calls[0]?.[0])).toContain("malformed env file");
   });
 
-  it("warns and skips when process.loadEnvFile is unavailable (Node < 20.12)", () => {
-    const warn = vi.spyOn(console, "error").mockImplementation(() => {});
+  it("ignores keys that do not start with WOODPECKER_", () => {
     const file = join(tempDir(), ".env.woodpecker");
-    writeFileSync(file, "X=1");
-    const proc = process as unknown as { loadEnvFile?: (path?: string) => void };
-    const original = proc.loadEnvFile;
-    proc.loadEnvFile = undefined;
+    writeFileSync(file, "NODE_TLS_REJECT_UNAUTHORIZED=0\nHTTPS_PROXY=http://evil.example.com\nWOODPECKER_TEST_ONLY_URL=https://ci.example.com\n");
+    const tls = process.env.NODE_TLS_REJECT_UNAUTHORIZED;
+    const proxy = process.env.HTTPS_PROXY;
     try {
-      expect(() => loadEnvFileIfPresent(file)).not.toThrow();
-      expect(String(warn.mock.calls[0]?.[0])).toMatch(/20\.12/);
+      expect([...loadEnvFileIfPresent(file)]).toEqual(["WOODPECKER_TEST_ONLY_URL"]);
+      expect(process.env.NODE_TLS_REJECT_UNAUTHORIZED).toBe(tls);
+      expect(process.env.HTTPS_PROXY).toBe(proxy);
     } finally {
-      proc.loadEnvFile = original;
+      delete process.env.WOODPECKER_TEST_ONLY_URL;
     }
   });
 });
@@ -177,5 +179,146 @@ describe("findInstance", () => {
 
   it("explains configuration when nothing is configured", () => {
     expect(() => findInstance([], "any")).toThrow(/No Woodpecker instances are configured/);
+  });
+});
+
+describe("loadInstances with .env.woodpecker keys", () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it("refuses a default URL from the file paired with a token from the environment", () => {
+    expect(() =>
+      loadInstances(
+        { WOODPECKER_URL: "https://evil.example.com", WOODPECKER_TOKEN: "real" },
+        new Set(["WOODPECKER_URL"]),
+      ),
+    ).toThrow(/WOODPECKER_URL comes from \.env\.woodpecker/);
+  });
+
+  it("skips a named instance whose URL comes from the file but token from the environment", () => {
+    const warn = vi.spyOn(console, "error").mockImplementation(() => {});
+    const instances = loadInstances(
+      {
+        WOODPECKER_ACME_URL: "https://evil.example.com",
+        WOODPECKER_ACME_TOKEN: "real",
+        WOODPECKER_OTHER_URL: "https://ci.example.com",
+        WOODPECKER_OTHER_TOKEN: "b",
+      },
+      new Set(["WOODPECKER_ACME_URL"]),
+    );
+    expect(instances.map((i) => i.name)).toEqual(["other"]);
+    expect(String(warn.mock.calls[0]?.[0])).toContain('ignoring instance "acme"');
+    expect(String(warn.mock.calls[0]?.[0])).not.toContain("real");
+  });
+
+  it("accepts pairs that come entirely from the file or entirely from the environment", () => {
+    const fromFile = loadInstances(
+      { WOODPECKER_URL: "https://ci.example.com", WOODPECKER_TOKEN: "t" },
+      new Set(["WOODPECKER_URL", "WOODPECKER_TOKEN"]),
+    );
+    expect(fromFile).toHaveLength(1);
+    expect(loadInstances({ WOODPECKER_URL: "https://ci.example.com", WOODPECKER_TOKEN: "t" })).toHaveLength(1);
+  });
+
+  it("accepts a token from the file with a URL from the environment", () => {
+    const instances = loadInstances(
+      { WOODPECKER_URL: "https://ci.example.com", WOODPECKER_TOKEN: "t" },
+      new Set(["WOODPECKER_TOKEN"]),
+    );
+    expect(instances).toHaveLength(1);
+  });
+
+  it("refuses WOODPECKER_DEFAULT_URL from the file with WOODPECKER_TOKEN from the environment", () => {
+    expect(() =>
+      loadInstances(
+        { WOODPECKER_DEFAULT_URL: "https://evil.example.com", WOODPECKER_TOKEN: "real" },
+        new Set(["WOODPECKER_DEFAULT_URL"]),
+      ),
+    ).toThrow(/WOODPECKER_DEFAULT_URL comes from/);
+  });
+
+  it("does not let the file replace an instance the environment defines", () => {
+    const warn = vi.spyOn(console, "error").mockImplementation(() => {});
+    const instances = loadInstances(
+      {
+        WOODPECKER_URL: "https://ci.example.com",
+        WOODPECKER_TOKEN: "real",
+        WOODPECKER_DEFAULT_URL: "https://evil.example.com",
+        WOODPECKER_DEFAULT_TOKEN: "planted",
+      },
+      new Set(["WOODPECKER_DEFAULT_URL", "WOODPECKER_DEFAULT_TOKEN"]),
+    );
+    expect(instances).toEqual([{ name: "default", url: "https://ci.example.com", token: "real" }]);
+    expect(warn.mock.calls.map((call) => String(call[0])).join("\n")).toContain("ignoring WOODPECKER_DEFAULT_URL");
+  });
+
+  it("rejects instance URLs that carry credentials without echoing them", () => {
+    let message = "";
+    try {
+      loadInstances({ WOODPECKER_URL: "https://bob:hunter2@ci.example.com", WOODPECKER_TOKEN: "t" });
+    } catch (error) {
+      message = String(error);
+    }
+    expect(message).toContain("credentials in its URL");
+    expect(message).not.toContain("hunter2");
+  });
+
+  it("prefers WOODPECKER_SERVER from the environment over WOODPECKER_URL from the file", () => {
+    const instances = loadInstances(
+      { WOODPECKER_URL: "https://evil.example.com", WOODPECKER_SERVER: "https://ci.example.com", WOODPECKER_TOKEN: "t" },
+      new Set(["WOODPECKER_URL"]),
+    );
+    expect(instances).toEqual([{ name: "default", url: "https://ci.example.com", token: "t" }]);
+  });
+
+  it("checks WOODPECKER_SERVER the same way as WOODPECKER_URL", () => {
+    expect(() =>
+      loadInstances(
+        { WOODPECKER_SERVER: "https://evil.example.com", WOODPECKER_TOKEN: "real" },
+        new Set(["WOODPECKER_SERVER"]),
+      ),
+    ).toThrow(/WOODPECKER_SERVER comes from/);
+  });
+});
+
+describe("plain http instance URLs", () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it("warns when a remote instance uses http", () => {
+    const warn = vi.spyOn(console, "error").mockImplementation(() => {});
+    loadInstances({ WOODPECKER_URL: "http://ci.example.com", WOODPECKER_TOKEN: "t" });
+    expect(String(warn.mock.calls[0]?.[0])).toContain("plain http");
+  });
+
+  it("does not warn for loopback instances", () => {
+    const warn = vi.spyOn(console, "error").mockImplementation(() => {});
+    loadInstances({
+      WOODPECKER_URL: "http://localhost:8000",
+      WOODPECKER_TOKEN: "t",
+      WOODPECKER_LOOP_URL: "http://127.0.0.1:8000",
+      WOODPECKER_LOOP_TOKEN: "t",
+      WOODPECKER_LOOP2_URL: "http://127.5.0.1:8000",
+      WOODPECKER_LOOP2_TOKEN: "t",
+      WOODPECKER_V6_URL: "http://[::1]:8000",
+      WOODPECKER_V6_TOKEN: "t",
+    });
+    expect(warn).not.toHaveBeenCalled();
+  });
+});
+
+describe("loadEnvFileIfPresent return value", () => {
+  it("returns only the keys the file added, not ones already set", () => {
+    const dir = mkdtempSync(join(tmpdir(), "woodpecker-mcp-test-"));
+    const file = join(dir, ".env.woodpecker");
+    writeFileSync(file, "WOODPECKER_TEST_ADDED_URL=https://ci.example.com\nWOODPECKER_TEST_PRESET=file\n");
+    process.env.WOODPECKER_TEST_PRESET = "env";
+    try {
+      const added = loadEnvFileIfPresent(file);
+      expect([...added]).toEqual(["WOODPECKER_TEST_ADDED_URL"]);
+      expect(process.env.WOODPECKER_TEST_PRESET).toBe("env");
+    } finally {
+      delete process.env.WOODPECKER_TEST_ADDED_URL;
+      delete process.env.WOODPECKER_TEST_PRESET;
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

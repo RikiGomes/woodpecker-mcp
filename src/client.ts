@@ -182,6 +182,36 @@ export class WoodpeckerApiError extends Error {
 }
 
 const REQUEST_TIMEOUT_MS = 30_000;
+// Woodpecker returns a step's whole log in one body; a hostile or misconfigured
+// server must not be able to exhaust memory.
+const MAX_RESPONSE_BYTES = 50 * 1024 * 1024;
+
+/**
+ * Reads a body as UTF-8. Past `maxBytes` it stops reading and returns
+ * undefined, or with `truncate` the first `maxBytes`.
+ */
+async function readCapped(response: Response, maxBytes: number, truncate = false): Promise<string | undefined> {
+  if (!response.body) return "";
+  const declared = Number(response.headers.get("content-length"));
+  if (!truncate && declared > maxBytes) {
+    await response.body.cancel().catch(() => {});
+    return undefined;
+  }
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(value);
+    size += value.byteLength;
+    if (size > maxBytes) {
+      await reader.cancel().catch(() => {});
+      return truncate ? Buffer.concat(chunks).subarray(0, maxBytes).toString("utf8") : undefined;
+    }
+  }
+  return Buffer.concat(chunks).toString("utf8");
+}
 
 export class WoodpeckerClient {
   readonly instance: WoodpeckerInstance;
@@ -320,17 +350,33 @@ export class WoodpeckerClient {
     }
 
     if (!response.ok) {
-      const raw = (await response.text().catch(() => "")).slice(0, 300);
+      const raw = (await readCapped(response, 4096, true).catch(() => "")) ?? "";
       // Defence in depth: never relay the bearer token to the MCP client, even
       // if a misconfigured proxy/server echoes the Authorization header back.
-      const body = this.instance.token ? raw.split(this.instance.token).join("[redacted]") : raw;
+      // Redact before truncating so a token cut at the boundary cannot leak.
+      const body = (this.instance.token ? raw.split(this.instance.token).join("[redacted]") : raw).slice(0, 300);
       throw new WoodpeckerApiError(
         `${this.instance.name}: GET ${url.pathname} returned HTTP ${response.status}${body ? `: ${body}` : ""}`,
         response.status,
       );
     }
+    let text: string | undefined;
     try {
-      return (await response.json()) as T;
+      text = await readCapped(response, MAX_RESPONSE_BYTES);
+    } catch (cause) {
+      throw new WoodpeckerApiError(
+        `${this.instance.name}: GET ${url.pathname} failed while reading the response: ${cause instanceof Error ? cause.message : String(cause)}`,
+        response.status,
+      );
+    }
+    if (text === undefined) {
+      throw new WoodpeckerApiError(
+        `${this.instance.name}: GET ${url.pathname} returned more than ${MAX_RESPONSE_BYTES / 1024 / 1024} MB; refusing to load it.`,
+        response.status,
+      );
+    }
+    try {
+      return JSON.parse(text.replace(/^\uFEFF/, "")) as T;
     } catch {
       // e.g. a reverse proxy answering 200 with an HTML error/login page.
       throw new WoodpeckerApiError(

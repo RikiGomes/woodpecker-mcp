@@ -163,4 +163,47 @@ describe("WoodpeckerClient", () => {
 
     await expect(client.currentUser()).rejects.toThrow(/instance "acme".*ECONNREFUSED/);
   });
+
+  it("refuses a body whose declared length exceeds the cap without reading it", async () => {
+    const fetchImpl = mockFetch(
+      () => new Response("[]", { status: 200, headers: { "Content-Length": String(60 * 1024 * 1024) } }),
+    );
+    const client = new WoodpeckerClient(INSTANCE, fetchImpl);
+    await expect(client.currentUser()).rejects.toThrow(/more than 50 MB/);
+  });
+
+  it("stops reading a streamed body once it passes the cap", async () => {
+    const chunk = new Uint8Array(1024 * 1024).fill(32);
+    let sent = 0;
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        if (sent++ < 60) controller.enqueue(chunk);
+        else controller.close();
+      },
+    });
+    const client = new WoodpeckerClient(INSTANCE, mockFetch(() => new Response(body, { status: 200 })));
+    await expect(client.currentUser()).rejects.toThrow(/more than 50 MB/);
+    expect(sent).toBeLessThan(60);
+  });
+
+  it("accepts a JSON body with a UTF-8 byte order mark", async () => {
+    const fetchImpl = mockFetch(() => new Response('\uFEFF{"login":"bob"}', { status: 200 }));
+    const client = new WoodpeckerClient(INSTANCE, fetchImpl);
+    await expect(client.currentUser()).resolves.toEqual({ login: "bob" });
+  });
+
+  it("redacts a token that straddles the error-body cut-off", async () => {
+    const fetchImpl = mockFetch(
+      () => new Response(`${"e".repeat(295)}${INSTANCE.token}`, { status: 401 }),
+    );
+    const client = new WoodpeckerClient(INSTANCE, fetchImpl);
+    const error = (await client.currentUser().catch((e: unknown) => e)) as Error;
+    expect(error.message).not.toContain(INSTANCE.token.slice(0, 5));
+  });
+
+  it("keeps the start of a large error body", async () => {
+    const fetchImpl = mockFetch(() => new Response(`denied ${"x".repeat(100_000)}`, { status: 403 }));
+    const client = new WoodpeckerClient(INSTANCE, fetchImpl);
+    await expect(client.currentUser()).rejects.toThrow(/HTTP 403: denied x+/);
+  });
 });

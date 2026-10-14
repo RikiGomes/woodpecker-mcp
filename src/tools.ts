@@ -1,7 +1,7 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { findInstance, type WoodpeckerInstance } from "./config.ts";
-import { WoodpeckerClient, type Pipeline, type QueueTask, type Step, type Workflow } from "./client.ts";
+import { WoodpeckerClient, type Pipeline, type QueueTask, type Secret, type Step, type Workflow } from "./client.ts";
 import { renderStepLogs, searchStepLogs } from "./logs.ts";
 
 export interface ToolContext {
@@ -659,19 +659,40 @@ export function registerTools(server: McpServer, context: ToolContext): void {
       title: "List secret names",
       annotations: READ_ONLY,
       description:
-        "Lists the names of a repository's secrets with the events and plugin images each is available to, and its note. Secret values are never returned. " +
-        "Use it to debug \"secret not found\" or a secret missing for an event (e.g. pull_request). Requires push access to the repository; Woodpecker answers 403 otherwise. " +
-        "Organization and global secrets are not included.",
-      inputSchema: { instance: instanceParam, repo: repoParam },
+        "Lists secret names with the events and plugin images each is available to, and its note. Secret values are never returned. " +
+        "Use it to debug \"secret not found\" or a secret missing for an event (e.g. pull_request). A pipeline sees repository, organization and global secrets, so check each `scope`. " +
+        "`repo` (default) needs push access to the repository and `org` needs organization admin rights, else Woodpecker answers 403; `global` is readable by any user and ignores `repo`.",
+      inputSchema: {
+        instance: instanceParam,
+        repo: repoParam.optional().describe('Repository as "owner/name" or numeric id; required unless scope is "global". For "org", its organization is used.'),
+        scope: z
+          .enum(["repo", "org", "global"])
+          .optional()
+          .describe('Which secrets: "repo" (default), "org" (the repository\'s organization) or "global" (server-wide).'),
+      },
     },
-    async ({ instance, repo }) =>
+    async ({ instance, repo, scope }) =>
       run(async () => {
         const client = clientFor(instance);
-        const repoId = await client.resolveRepoId(repo);
-        const secrets = (await client.listSecrets(repoId)) ?? [];
+        let secrets: Secret[] | null;
+        let ref = {};
+        if (scope === "global") {
+          secrets = await client.listGlobalSecrets();
+        } else {
+          if (!repo) throw new Error(`list_secrets needs \`repo\` for scope "${scope ?? "repo"}".`);
+          const repoId = await client.resolveRepoId(repo);
+          ref = repoRef(repo, repoId);
+          if (scope === "org") {
+            const orgId = (await client.getRepo(repoId)).org_id;
+            if (!orgId) throw new Error(`Woodpecker did not report an organization for repository ${repo}.`);
+            secrets = await client.listOrgSecrets(orgId);
+          } else {
+            secrets = await client.listSecrets(repoId);
+          }
+        }
         return ok({
-          ...repoRef(repo, repoId),
-          secrets: secrets.map((secret) => ({
+          ...ref,
+          secrets: (secrets ?? []).map((secret) => ({
             name: secret.name,
             events: secret.events ?? [],
             images: secret.images?.length ? secret.images : undefined,

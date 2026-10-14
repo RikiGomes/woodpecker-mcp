@@ -68,6 +68,12 @@ function fakeWoodpecker(url: URL): Response {
       ]);
     case url.pathname === "/api/repos/7/secrets":
       return json([{ name: "docker_password", value: "hunter2", events: ["push"], images: [], note: "" }]);
+    case url.pathname === "/api/repos/7":
+      return json({ id: 7, full_name: "acme/webapp", org_id: 3 });
+    case url.pathname === "/api/orgs/3/secrets":
+      return json([{ name: "registry_token", value: "org-hunter2", events: ["push", "tag"], images: ["woodpeckerci/plugin-docker-buildx"], note: "shared" }]);
+    case url.pathname === "/api/secrets":
+      return json([{ name: "sonar_token", value: "global-hunter2", events: ["push"] }]);
     case url.pathname === "/api/repos/7/pipelines/13":
       return json({ id: 901, number: 13, status: "error", errors: [{ type: "linter", message: "bad yaml" }] });
     case url.pathname === "/api/repos/9/cron":
@@ -466,6 +472,28 @@ describe("woodpecker MCP tools", () => {
     );
     expect(JSON.parse(text).secrets).toEqual([{ name: "docker_password", events: ["push"] }]);
     expect(text).not.toContain("hunter2");
+  });
+
+  it("list_secrets lists organization secrets via the repository's org", async () => {
+    const text = textOf(
+      await client.callTool({ name: "list_secrets", arguments: { instance: "acme", repo: "acme/webapp", scope: "org" } }),
+    );
+    expect(JSON.parse(text).secrets).toEqual([
+      { name: "registry_token", events: ["push", "tag"], images: ["woodpeckerci/plugin-docker-buildx"], note: "shared" },
+    ]);
+    expect(text).not.toContain("org-hunter2");
+  });
+
+  it("list_secrets lists global secrets without a repo", async () => {
+    const text = textOf(await client.callTool({ name: "list_secrets", arguments: { instance: "acme", scope: "global" } }));
+    expect(JSON.parse(text)).toEqual({ secrets: [{ name: "sonar_token", events: ["push"] }] });
+    expect(text).not.toContain("global-hunter2");
+  });
+
+  it("list_secrets needs a repo outside the global scope", async () => {
+    const result = await client.callTool({ name: "list_secrets", arguments: { instance: "acme", scope: "org" } });
+    expect(result.isError).toBe(true);
+    expect(textOf(result)).toContain("needs `repo`");
   });
 
   it("list_agents never relays the agent token", async () => {

@@ -21,7 +21,7 @@ Built against the Woodpecker v3 REST API (verified on v3.16.0; endpoints added s
 | `list_branches` | Branch names from the forge |
 | `list_pull_requests` | Open pull requests from the forge |
 | `list_crons` | Cron jobs of a repo (variable names only) *(push access)* |
-| `list_secrets` | Secret names, events and images; never values *(push access)* |
+| `list_secrets` | Repository, organization or global secret names, events and images; never values *(push access; org admin for `org`)* |
 | `list_agents` | Build agents and when they last checked in *(admin)* |
 | `get_queue_info` | Pending / running tasks and worker counts, to explain stuck pipelines *(admin)* |
 

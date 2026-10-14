@@ -16,6 +16,7 @@ Built against the Woodpecker v3 REST API (verified on v3.16.0; endpoints added s
 | `list_pipelines` | Recent pipelines for a repo, filterable by branch / event / status |
 | `get_pipeline` | One pipeline with workflows, non-passing steps, exit codes, and `failed_step_ids` (`all_steps` lists every step) |
 | `diagnose_pipeline` | One-call triage: failed steps with their exit codes, errors and log tails |
+| `compare_pipelines` | What broke: the newest failing run vs the last green one on a branch, with only the changed steps, the runs in between and changed config files |
 | `get_step_logs` | Log output of a step (tailed, default last 60 lines), or `match` to search the whole log for plain text |
 | `get_pipeline_config` | The workflow YAML files Woodpecker fetched for a pipeline |
 | `list_branches` | Branch names from the forge |

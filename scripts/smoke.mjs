@@ -12,6 +12,7 @@ import { dirname, join } from 'node:path';
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const VERSION = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).version;
 const EXPECTED = [
+  'compare_pipelines',
   'diagnose_pipeline',
   'get_pipeline',
   'get_pipeline_config',

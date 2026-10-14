@@ -9,6 +9,7 @@ export interface Repo {
   default_branch?: string;
   forge_url?: string;
   active?: boolean;
+  org_id?: number;
 }
 
 export interface PipelineError {
@@ -306,6 +307,14 @@ export class WoodpeckerClient {
 
   listSecrets(repoId: number): Promise<Secret[] | null> {
     return this.get<Secret[] | null>(`/api/repos/${repoId}/secrets`);
+  }
+
+  listOrgSecrets(orgId: number): Promise<Secret[] | null> {
+    return this.get<Secret[] | null>(`/api/orgs/${orgId}/secrets`);
+  }
+
+  listGlobalSecrets(): Promise<Secret[] | null> {
+    return this.get<Secret[] | null>("/api/secrets");
   }
 
   listAgents(): Promise<Agent[] | null> {

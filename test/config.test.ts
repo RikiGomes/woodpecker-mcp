@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { findInstance, loadEnvFileIfPresent, loadInstances } from "../src/config.ts";
+import { findInstance, loadEnvFileIfPresent, loadInstances, repoAllowed } from "../src/config.ts";
 
 describe("loadInstances", () => {
   it("returns an empty list when no woodpecker vars are set", () => {
@@ -14,7 +14,9 @@ describe("loadInstances", () => {
       WOODPECKER_URL: "https://ci.example.com/",
       WOODPECKER_TOKEN: "tok",
     });
-    expect(instances).toEqual([{ name: "default", url: "https://ci.example.com", token: "tok" }]);
+    expect(instances).toEqual([
+      { name: "default", url: "https://ci.example.com", token: "tok", writes: ["restart", "cancel"] },
+    ]);
   });
 
   it("accepts WOODPECKER_SERVER (the official CLI variable) as the default URL", () => {
@@ -63,7 +65,7 @@ describe("loadInstances", () => {
         WOODPECKER_ACME_URL: "https://ci.example.com",
         WOODPECKER_ACME_TOKEN: "a",
       });
-      expect(instances).toEqual([{ name: "acme", url: "https://ci.example.com", token: "a" }]);
+      expect(instances).toMatchObject([{ name: "acme", url: "https://ci.example.com", token: "a" }]);
       const warnings = warn.mock.calls.map((call) => String(call[0])).join("\n");
       expect(warnings).toContain("WOODPECKER_GITHUB_TOKEN");
       expect(warnings).toContain("WOODPECKER_EXPERT_FORGE_OAUTH_TOKEN");
@@ -250,7 +252,7 @@ describe("loadInstances with .env.woodpecker keys", () => {
       },
       new Set(["WOODPECKER_DEFAULT_URL", "WOODPECKER_DEFAULT_TOKEN"]),
     );
-    expect(instances).toEqual([{ name: "default", url: "https://ci.example.com", token: "real" }]);
+    expect(instances).toMatchObject([{ name: "default", url: "https://ci.example.com", token: "real" }]);
     expect(warn.mock.calls.map((call) => String(call[0])).join("\n")).toContain("ignoring WOODPECKER_DEFAULT_URL");
   });
 
@@ -270,7 +272,7 @@ describe("loadInstances with .env.woodpecker keys", () => {
       { WOODPECKER_URL: "https://evil.example.com", WOODPECKER_SERVER: "https://ci.example.com", WOODPECKER_TOKEN: "t" },
       new Set(["WOODPECKER_URL"]),
     );
-    expect(instances).toEqual([{ name: "default", url: "https://ci.example.com", token: "t" }]);
+    expect(instances).toMatchObject([{ name: "default", url: "https://ci.example.com", token: "t" }]);
   });
 
   it("checks WOODPECKER_SERVER the same way as WOODPECKER_URL", () => {
@@ -323,5 +325,55 @@ describe("loadEnvFileIfPresent return value", () => {
       delete process.env.WOODPECKER_TEST_PRESET;
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe("write settings", () => {
+  const pair = { WOODPECKER_ACME_URL: "https://ci.example.com", WOODPECKER_ACME_TOKEN: "a" };
+
+  it("enables every write tool when ALLOW_WRITE is unset", () => {
+    expect(loadInstances(pair)[0]?.writes).toEqual(["restart", "cancel"]);
+  });
+
+  it("reads ALLOW_WRITE per instance, including all, none and an empty value", () => {
+    const writes = (value: string) => loadInstances({ ...pair, WOODPECKER_ACME_ALLOW_WRITE: value })[0]?.writes;
+    expect(writes("cancel")).toEqual(["cancel"]);
+    expect(writes(" Restart , CANCEL ")).toEqual(["restart", "cancel"]);
+    expect(writes("all")).toEqual(["restart", "cancel"]);
+    expect(writes("none")).toEqual([]);
+    expect(writes("")).toEqual([]);
+  });
+
+  it("reads WOODPECKER_ALLOW_WRITE for the default instance", () => {
+    const [instance] = loadInstances({
+      WOODPECKER_URL: "https://ci.example.com",
+      WOODPECKER_TOKEN: "t",
+      WOODPECKER_ALLOW_WRITE: "none",
+      WOODPECKER_WRITE_REPOS: "acme/*",
+    });
+    expect(instance).toMatchObject({ writes: [], writeRepos: ["acme/*"] });
+  });
+
+  it("drops unknown ALLOW_WRITE values with a warning, which only narrows", () => {
+    const warn = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      expect(loadInstances({ ...pair, WOODPECKER_ACME_ALLOW_WRITE: "restrat,cancel" })[0]?.writes).toEqual(["cancel"]);
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining("WOODPECKER_ACME_ALLOW_WRITE has unknown value(s) restrat"));
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("parses WRITE_REPOS and matches exact names, owner wildcards and *", () => {
+    const [instance] = loadInstances({ ...pair, WOODPECKER_ACME_WRITE_REPOS: " Acme/WebApp, tools/* ,," });
+    expect(instance?.writeRepos).toEqual(["acme/webapp", "tools/*"]);
+    expect(repoAllowed(instance?.writeRepos, "acme/webapp")).toBe(true);
+    expect(repoAllowed(instance?.writeRepos, "acme/webapp2")).toBe(false);
+    expect(repoAllowed(instance?.writeRepos, "tools/cli")).toBe(true);
+    expect(repoAllowed(instance?.writeRepos, "tools/group/cli")).toBe(true);
+    expect(repoAllowed(instance?.writeRepos, "toolsx/cli")).toBe(false);
+    expect(repoAllowed(["*"], "anything/at-all")).toBe(true);
+    expect(repoAllowed(undefined, "anything/at-all")).toBe(true);
+    expect(repoAllowed([], "acme/webapp")).toBe(false);
   });
 });

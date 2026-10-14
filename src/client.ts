@@ -57,6 +57,9 @@ export interface Pipeline {
   finished?: number;
   errors?: PipelineError[];
   forge_url?: string;
+  from_fork?: boolean;
+  /** Login of whoever approved or declined a blocked pipeline. */
+  reviewed_by?: string;
   /** Only populated by the single-pipeline endpoint, not the list endpoint. */
   workflows?: Workflow[];
 }
@@ -329,12 +332,31 @@ export class WoodpeckerClient {
     return this.get<LogEntry[]>(`/api/repos/${repoId}/logs/${pipelineNumber}/${stepId}`);
   }
 
+  /**
+   * Restarts a finished pipeline as a new one. Deliberately sends no query
+   * string: Woodpecker turns `event`/`deploy_to` into a deployment and every
+   * other parameter into an environment variable of the new pipeline.
+   */
+  restartPipeline(repoId: number, pipelineNumber: number): Promise<Pipeline> {
+    return this.request<Pipeline>("POST", `/api/repos/${repoId}/pipelines/${pipelineNumber}`);
+  }
+
+  /** Woodpecker answers 204 with no body. */
+  async cancelPipeline(repoId: number, pipelineNumber: number): Promise<void> {
+    await this.request<unknown>("POST", `/api/repos/${repoId}/pipelines/${pipelineNumber}/cancel`);
+  }
+
   /** Woodpecker UI link for a pipeline, handy for humans reading agent output. */
   pipelineUrl(repoId: number, pipelineNumber: number | "latest"): string {
     return `${this.instance.url}/repos/${repoId}/pipeline/${pipelineNumber}`;
   }
 
-  private async get<T>(
+  private get<T>(path: string, query?: Record<string, string | number | undefined>): Promise<T> {
+    return this.request<T>("GET", path, query);
+  }
+
+  private async request<T>(
+    method: "GET" | "POST",
     path: string,
     query?: Record<string, string | number | undefined>,
   ): Promise<T> {
@@ -348,6 +370,7 @@ export class WoodpeckerClient {
     let response: Response;
     try {
       response = await this.fetchImpl(url, {
+        method,
         headers: { Authorization: `Bearer ${this.instance.token}` },
         signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
       });
@@ -365,7 +388,7 @@ export class WoodpeckerClient {
       // Redact before truncating so a token cut at the boundary cannot leak.
       const body = (this.instance.token ? raw.split(this.instance.token).join("[redacted]") : raw).slice(0, 300);
       throw new WoodpeckerApiError(
-        `${this.instance.name}: GET ${url.pathname} returned HTTP ${response.status}${body ? `: ${body}` : ""}`,
+        `${this.instance.name}: ${method} ${url.pathname} returned HTTP ${response.status}${body ? `: ${body}` : ""}`,
         response.status,
       );
     }
@@ -374,22 +397,23 @@ export class WoodpeckerClient {
       text = await readCapped(response, MAX_RESPONSE_BYTES);
     } catch (cause) {
       throw new WoodpeckerApiError(
-        `${this.instance.name}: GET ${url.pathname} failed while reading the response: ${cause instanceof Error ? cause.message : String(cause)}`,
+        `${this.instance.name}: ${method} ${url.pathname} failed while reading the response: ${cause instanceof Error ? cause.message : String(cause)}`,
         response.status,
       );
     }
     if (text === undefined) {
       throw new WoodpeckerApiError(
-        `${this.instance.name}: GET ${url.pathname} returned more than ${MAX_RESPONSE_BYTES / 1024 / 1024} MB; refusing to load it.`,
+        `${this.instance.name}: ${method} ${url.pathname} returned more than ${MAX_RESPONSE_BYTES / 1024 / 1024} MB; refusing to load it.`,
         response.status,
       );
     }
+    if (method !== "GET" && text.trim() === "") return undefined as T;
     try {
       return JSON.parse(text.replace(/^\uFEFF/, "")) as T;
     } catch {
       // e.g. a reverse proxy answering 200 with an HTML error/login page.
       throw new WoodpeckerApiError(
-        `${this.instance.name}: GET ${url.pathname} returned a non-JSON response body ` +
+        `${this.instance.name}: ${method} ${url.pathname} returned a non-JSON response body ` +
           `(is ${url.origin} really a Woodpecker server?)`,
         response.status,
       );

@@ -2,6 +2,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { beforeAll, describe, expect, it, vi } from "vitest";
+import type { WoodpeckerInstance } from "../src/config.ts";
 import { registerTools } from "../src/tools.ts";
 
 const b64 = (text: string) => Buffer.from(text, "utf8").toString("base64");
@@ -75,12 +76,59 @@ const paged = (runs: unknown[], url: URL) => {
 };
 
 const requested: URL[] = [];
+const posted: URL[] = [];
+let canceled20 = false;
 
-function fakeWoodpecker(url: URL): Response {
+const writeRun = (number: number, fields: Record<string, unknown>) => ({
+  id: 3000 + number,
+  number,
+  branch: "main",
+  message: "Write target",
+  commit: "feedfacefeedface",
+  created: 1_750_000_000,
+  started: 1_750_000_010,
+  ...fields,
+});
+
+function fakeWoodpecker(url: URL, method = "GET"): Response {
   requested.push(url);
   const json = (payload: unknown) =>
     new Response(JSON.stringify(payload), { status: 200, headers: { "Content-Type": "application/json" } });
+  if (method === "POST") {
+    posted.push(url);
+    switch (url.pathname) {
+      case "/api/repos/7/pipelines/27":
+        return json({ id: 951, number: 28, status: "pending" });
+      case "/api/repos/7/pipelines/12":
+        return json({ ...PIPELINE, id: 950, number: 15, status: "pending", workflows: undefined });
+      case "/api/repos/7/pipelines/20/cancel":
+        canceled20 = true;
+        return new Response(null, { status: 204 });
+      default:
+        return new Response("unexpected POST", { status: 400 });
+    }
+  }
   switch (true) {
+    case url.pathname === "/api/repos/7/pipelines/20":
+      return json(writeRun(20, { status: canceled20 ? "killed" : "running", event: "push" }));
+    case url.pathname === "/api/repos/7/pipelines/21":
+      return json(writeRun(21, { status: "failure", event: "deployment", finished: 1_750_000_090 }));
+    case url.pathname === "/api/repos/7/pipelines/22":
+      return json(writeRun(22, { status: "canceled", event: "pull_request", from_fork: true, started: 0 }));
+    case url.pathname === "/api/repos/7/pipelines/23":
+      return json(writeRun(23, { status: "running", event: "tag" }));
+    case url.pathname === "/api/repos/7/pipelines/26":
+      return json(writeRun(26, { status: "canceled", event: "push", started: 0 }));
+    case url.pathname === "/api/repos/7/pipelines/27":
+      return json(writeRun(27, { status: "error", event: "push", started: 0 }));
+    case url.pathname === "/api/repos/7/pipelines/29":
+      return json(writeRun(29, { status: "killed", event: "pull_request", started: 0 }));
+    case url.pathname === "/api/repos/7/pipelines/25":
+      return json(writeRun(25, { status: "running", event: "push" }));
+    case url.pathname === "/api/repos/7/pipelines/24":
+      return json(writeRun(24, { status: "declined", event: "pull_request", reviewed_by: "alice", started: 0 }));
+    case url.pathname === "/api/repos/8/pipelines/5":
+      return json(writeRun(5, { status: "failure", event: "push" }));
     case url.pathname === "/api/user":
       return json({ login: "reviewer-bot" });
     case url.pathname === "/api/user/repos":
@@ -181,9 +229,9 @@ function fakeWoodpecker(url: URL): Response {
   }
 }
 
-async function connectedClient(instances: Array<{ name: string; url: string; token: string }>) {
-  const fetchImpl = vi.fn(async (input: string | URL | Request) =>
-    fakeWoodpecker(input instanceof URL ? input : new URL(String(input))),
+async function connectedClient(instances: WoodpeckerInstance[]) {
+  const fetchImpl = vi.fn(async (input: string | URL | Request, init?: RequestInit) =>
+    fakeWoodpecker(input instanceof URL ? input : new URL(String(input)), init?.method),
   ) as unknown as typeof fetch;
 
   const server = new McpServer({ name: "woodpecker", version: "0.0.0-test" });
@@ -208,9 +256,10 @@ describe("woodpecker MCP tools", () => {
     client = await connectedClient(INSTANCES);
   });
 
-  it("exposes the read-only tools", async () => {
+  it("exposes the read tools and, by default, the write tools", async () => {
     const { tools } = await client.listTools();
     expect(tools.map((t) => t.name).sort()).toEqual([
+      "cancel_pipeline",
       "compare_pipelines",
       "diagnose_pipeline",
       "get_pipeline",
@@ -226,14 +275,18 @@ describe("woodpecker MCP tools", () => {
       "list_repos",
       "list_secrets",
       "recent_activity",
+      "restart_pipeline",
     ]);
   });
 
-  it("marks every tool read-only for clients", async () => {
+  it("marks read tools read-only and write tools not", async () => {
     const { tools } = await client.listTools();
     for (const tool of tools) {
-      expect(tool.annotations, tool.name).toMatchObject({ readOnlyHint: true, openWorldHint: true });
+      const write = tool.name === "restart_pipeline" || tool.name === "cancel_pipeline";
+      expect(tool.annotations, tool.name).toMatchObject({ readOnlyHint: !write, openWorldHint: true });
     }
+    expect(tools.find((t) => t.name === "cancel_pipeline")?.annotations?.destructiveHint).toBe(true);
+    expect(tools.find((t) => t.name === "restart_pipeline")?.annotations?.destructiveHint).toBe(false);
   });
 
   it("get_step_logs caps a huge tail by size and says so", async () => {
@@ -660,5 +713,107 @@ describe("woodpecker MCP tools", () => {
     const empty = await connectedClient([]);
     const result = await empty.callTool({ name: "list_instances", arguments: {} });
     expect(textOf(result)).toContain("WOODPECKER_URL");
+  });
+});
+
+describe("write tools", () => {
+  let client: Client;
+  beforeAll(async () => {
+    client = await connectedClient(INSTANCES);
+  });
+
+  const call = (name: string, args: Record<string, unknown>) =>
+    client.callTool({ name, arguments: { instance: "acme", repo: "acme/webapp", ...args } });
+
+  it("restart_pipeline restarts a finished pipeline without any query string", async () => {
+    const before = posted.length;
+    const result = await call("restart_pipeline", { number: 12 });
+    expect(result.isError).toBeFalsy();
+    expect(JSON.parse(textOf(result))).toEqual({
+      repo_id: 7,
+      restarted: 12,
+      number: 15,
+      status: "pending",
+      url: "https://ci.example.com/repos/7/pipeline/15",
+    });
+    const sent = posted.slice(before);
+    expect(sent.map((url) => url.pathname)).toEqual(["/api/repos/7/pipelines/12"]);
+    expect(sent[0]?.search).toBe("");
+  });
+
+  it("restart_pipeline restarts a pipeline that errored before it started", async () => {
+    const result = await call("restart_pipeline", { number: 27 });
+    expect(result.isError).toBeFalsy();
+    expect(JSON.parse(textOf(result))).toMatchObject({ restarted: 27, number: 28 });
+  });
+
+  it("cancel_pipeline cancels a running pipeline and reports its new status", async () => {
+    const result = await call("cancel_pipeline", { number: 20 });
+    expect(result.isError).toBeFalsy();
+    expect(JSON.parse(textOf(result))).toMatchObject({ number: 20, status: "killed" });
+  });
+
+  it("refuses deployment, tag and release pipelines", async () => {
+    for (const [name, number] of [["restart_pipeline", 21], ["cancel_pipeline", 23]] as const) {
+      const before = posted.length;
+      const result = await call(name, { number });
+      expect(result.isError, name).toBe(true);
+      expect(textOf(result)).toMatch(/is a (deployment|tag) pipeline/);
+      expect(posted.length).toBe(before);
+    }
+  });
+
+  it("restart_pipeline refuses unfinished, declined and never-approved pipelines", async () => {
+    const before = posted.length;
+    expect(textOf(await call("restart_pipeline", { number: 25 }))).toContain("only finished pipelines");
+    expect(textOf(await call("restart_pipeline", { number: 24 }))).toContain("only finished pipelines");
+    expect(textOf(await call("restart_pipeline", { number: 22 }))).toContain("comes from a fork");
+    expect(textOf(await call("restart_pipeline", { number: 26 }))).toContain("stopped before it ran");
+    expect(textOf(await call("restart_pipeline", { number: 29 }))).toContain("stopped before it ran");
+    expect(posted.length).toBe(before);
+  });
+
+  it("cancel_pipeline refuses a pipeline that is not pending or running", async () => {
+    const result = await call("cancel_pipeline", { number: 12 });
+    expect(result.isError).toBe(true);
+    expect(textOf(result)).toContain("only pending or running");
+  });
+
+  it("write tools need a concrete pipeline number", async () => {
+    const result = await call("restart_pipeline", { number: "latest" });
+    expect(result.isError).toBe(true);
+    expect(textOf(result)).toContain("concrete pipeline number");
+  });
+
+  it("are not registered when every instance sets ALLOW_WRITE=none", async () => {
+    const readOnly = await connectedClient([{ ...INSTANCES[0]!, writes: [] }]);
+    const names = (await readOnly.listTools()).tools.map((t) => t.name);
+    expect(names).not.toContain("restart_pipeline");
+    expect(names).not.toContain("cancel_pipeline");
+    expect(names).toContain("get_pipeline");
+  });
+
+  it("refuse an action the instance did not enable", async () => {
+    const mixed = await connectedClient([
+      { ...INSTANCES[0]!, writes: ["cancel"] },
+      { name: "other", url: "https://ci2.example.com", token: "tok2" },
+    ]);
+    const result = await mixed.callTool({
+      name: "restart_pipeline",
+      arguments: { instance: "acme", repo: "acme/webapp", number: 12 },
+    });
+    expect(result.isError).toBe(true);
+    expect(textOf(result)).toContain("WOODPECKER_ACME_ALLOW_WRITE");
+  });
+
+  it("refuse repositories outside WRITE_REPOS", async () => {
+    const limited = await connectedClient([{ ...INSTANCES[0]!, writeRepos: ["acme/webapp"] }]);
+    const before = posted.length;
+    const denied = await limited.callTool({ name: "restart_pipeline", arguments: { instance: "acme", repo: "8", number: 5 } });
+    expect(denied.isError).toBe(true);
+    expect(textOf(denied)).toContain("not listed in WOODPECKER_ACME_WRITE_REPOS");
+    expect(posted.length).toBe(before);
+    const allowed = await limited.callTool({ name: "restart_pipeline", arguments: { instance: "acme", repo: "7", number: 12 } });
+    expect(allowed.isError).toBeFalsy();
   });
 });

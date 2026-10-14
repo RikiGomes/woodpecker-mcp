@@ -8,6 +8,48 @@ export interface WoodpeckerInstance {
   url: string;
   /** Personal access token (from <server>/user → API token). */
   token: string;
+  /** Write tools enabled on this instance; undefined means all of them. */
+  writes?: readonly WriteAction[];
+  /** `owner/name` or `owner/*` patterns the write tools may touch; undefined means any repo. */
+  writeRepos?: readonly string[];
+}
+
+export const WRITE_ACTIONS = ["restart", "cancel"] as const;
+export type WriteAction = (typeof WRITE_ACTIONS)[number];
+
+const isWriteAction = (value: string): value is WriteAction => (WRITE_ACTIONS as readonly string[]).includes(value);
+
+/**
+ * Parses `<PREFIX>_ALLOW_WRITE`: unset means every write tool, `none` or an
+ * empty value means none, otherwise a comma list (`all` allowed). Unknown
+ * words are dropped with a warning, which only ever narrows the set.
+ */
+function parseAllowWrite(key: string, raw: string | undefined): WriteAction[] {
+  if (raw === undefined) return [...WRITE_ACTIONS];
+  const words = raw.split(",").map((word) => word.trim().toLowerCase()).filter(Boolean);
+  if (words.includes("all")) return [...WRITE_ACTIONS];
+  const unknown = words.filter((word) => word !== "none" && !isWriteAction(word));
+  if (unknown.length) {
+    console.error(
+      `woodpecker-mcp: ${key} has unknown value(s) ${unknown.join(", ")}; ` +
+        `expected all, none or a list of ${WRITE_ACTIONS.join(", ")}.`,
+    );
+  }
+  return WRITE_ACTIONS.filter((action) => words.includes(action));
+}
+
+function parseWriteRepos(raw: string | undefined): string[] | undefined {
+  if (raw === undefined) return undefined;
+  return raw.split(",").map((pattern) => pattern.trim().toLowerCase().replace(/^\/+|\/+$/g, "")).filter(Boolean);
+}
+
+/** Whether `fullName` matches one of the `owner/name`, `owner/*` or `*` patterns, case-insensitively. */
+export function repoAllowed(patterns: readonly string[] | undefined, fullName: string): boolean {
+  if (patterns === undefined) return true;
+  const name = fullName.toLowerCase();
+  return patterns.some((pattern) =>
+    pattern === "*" || (pattern.endsWith("/*") ? name.startsWith(pattern.slice(0, -1)) : name === pattern),
+  );
 }
 
 const NAMED_VAR = /^WOODPECKER_([A-Z0-9_]+)_(URL|TOKEN)$/;
@@ -108,7 +150,9 @@ export function loadInstances(
           `woodpecker-mcp: instance "${name}" uses plain http (${parsed.origin}); its token is sent unencrypted.`,
         );
       }
-      instances.push({ name, url, token: entry.token });
+      const writes = parseAllowWrite(`${envName}_ALLOW_WRITE`, env[`${envName}_ALLOW_WRITE`]);
+      const writeRepos = parseWriteRepos(env[`${envName}_WRITE_REPOS`]);
+      instances.push({ name, url, token: entry.token, writes, ...(writeRepos ? { writeRepos } : {}) });
     } else if (name === "default") {
       throw new Error(
         `Incomplete Woodpecker instance configuration: "default" is missing ` +

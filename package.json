@@ -3,7 +3,7 @@
   "version": "0.2.0",
   "private": true,
   "type": "module",
-  "description": "MCP server for Woodpecker CI: read-only pipeline status and logs across multiple self-hosted instances",
+  "description": "MCP server for Woodpecker CI: pipeline status, logs and guarded restart/cancel across multiple self-hosted instances",
   "license": "MIT",
   "keywords": [
     "mcp",

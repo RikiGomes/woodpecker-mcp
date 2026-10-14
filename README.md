@@ -2,9 +2,9 @@
 
 [![CI](https://github.com/RikiGomes/woodpecker-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/RikiGomes/woodpecker-mcp/actions/workflows/ci.yml)
 
-MCP (Model Context Protocol) server for [Woodpecker CI](https://woodpecker-ci.org). Gives AI agents and MCP clients **read-only** visibility into pipeline status and logs across **multiple self-hosted Woodpecker instances**, so a code reviewer (human or agent) can check whether CI is green and pull the failing step's output without leaving the conversation.
+MCP (Model Context Protocol) server for [Woodpecker CI](https://woodpecker-ci.org). Gives AI agents and MCP clients visibility into pipeline status and logs across **multiple self-hosted Woodpecker instances**, so a code reviewer (human or agent) can check whether CI is green and pull the failing step's output without leaving the conversation, plus a small set of guarded pipeline controls (restart, cancel).
 
-Built against the Woodpecker v3 REST API (verified on v3.16.0; endpoints added since were checked against the v3.19.0 server source). No write operations: the server never restarts, approves, or cancels pipelines.
+Built against the Woodpecker v3 REST API (verified on v3.16.0; endpoints added since were checked against the v3.19.0 server source). The only write operations are the guarded pipeline controls under [Write actions](#write-actions); the server never approves pipelines, never reads secret values and never deletes anything.
 
 ## Tools
 
@@ -25,6 +25,8 @@ Built against the Woodpecker v3 REST API (verified on v3.16.0; endpoints added s
 | `list_secrets` | Repository, organization or global secret names, events and images; never values *(push access; org admin for `org`)* |
 | `list_agents` | Build agents and when they last checked in *(admin)* |
 | `get_queue_info` | Pending / running tasks and worker counts, to explain stuck pipelines *(admin)* |
+| `restart_pipeline` | Re-run a finished pipeline *(write, push access)* |
+| `cancel_pipeline` | Cancel a pending or running pipeline *(write, push access)* |
 
 Tools marked *(push access)* or *(admin)* return Woodpecker's 403 as a tool error when the token lacks that permission.
 
@@ -53,6 +55,26 @@ The server also loads a `.env.woodpecker` file from its working directory if pre
 A plain `http://` URL for a non-local instance works but logs a warning, since the token then travels unencrypted.
 
 Instances with self-signed certificates: point Node at your CA with `NODE_EXTRA_CA_CERTS=/path/to/ca.pem`.
+
+### Write actions
+
+`restart_pipeline` and `cancel_pipeline` are enabled by default. Narrow or disable them per instance:
+
+```bash
+WOODPECKER_PROD_ALLOW_WRITE=cancel            # only cancel; "all" (the default when unset) or "none" also work
+WOODPECKER_PROD_WRITE_REPOS=acme/webapp,tools/*  # optional: only these repos ("owner/*" covers an owner)
+# For the "default" instance: WOODPECKER_ALLOW_WRITE and WOODPECKER_WRITE_REPOS.
+```
+
+An empty `ALLOW_WRITE` means none. Unknown values are dropped with a warning. A tool is only advertised when at least one instance enables it, and the startup line on stderr lists each instance's write tools.
+
+Woodpecker tokens are not scoped, so these guards are what keeps the tools safe. Every write first reads the pipeline and refuses:
+
+- deployment, tag and release pipelines, which may deploy or publish;
+- restarting anything that is not finished, and unapproved fork pipelines or pipelines canceled before they ran (which may have been waiting for approval), because Woodpecker's restart skips the approval gate;
+- cancelling anything that is not pending or running; a blocked pipeline waiting for approval is left to a human.
+
+A restart sends no query string: on that endpoint Woodpecker turns `event`/`deploy_to` into a deployment and every other parameter into an environment variable. The write tools are advertised without `readOnlyHint`, so MCP clients ask before calling them unless you allow them.
 
 ## Usage with Claude Code
 
@@ -136,11 +158,11 @@ npx @modelcontextprotocol/inspector --cli node dist/index.js --method tools/call
 
 ## Design notes
 
-- **Read-only by contract.** Intended for reviewer agents; there is deliberately no restart/approve/cancel surface.
+- **Read-mostly by contract.** Intended for reviewer agents. The only writes are the guarded restart and cancel above, POST only; there is deliberately no approve, delete or settings surface.
 - **Log tailing.** Woodpecker returns a step's entire stored log in one response; `get_step_logs` tails (default 60 lines, max 2000) to protect the caller's context window, clips lines over 2000 characters and caps the tail at 100,000 characters. Upstream responses over 50 MB are refused rather than loaded into memory. Exit-code entries are labelled `[exit code]`.
 - **Lean responses.** Output is compact JSON sized for an agent's context: inputs are not echoed back, times are one ISO `created` plus `duration_s`, list rows carry no URLs, successful and skipped steps are counted rather than listed, and logs lose colour codes, progress lines and spinner frames, with repeated lines collapsed. Tests hold each tool to a size budget.
 - **Untrusted content.** Logs, commit messages, PR titles and pipeline YAML are written by whoever pushed or opened the pull request, which on a public repository can be anyone. An agent reading them should treat them as data, not instructions; the tool descriptions say so too. `get_pipeline_config` returns the YAML verbatim, including anything written inline in it.
-- **Tool annotations.** Every tool is advertised with `readOnlyHint: true`, so clients that support it can allow them without a confirmation prompt.
+- **Tool annotations.** Every read tool is advertised with `readOnlyHint: true`, so clients that support it can allow them without a confirmation prompt. The write tools are not; `cancel_pipeline` also carries `destructiveHint: true`.
 - **Slug resolution.** `owner/name` is resolved via `/api/repos/lookup/…` once and cached per process.
 - **Sub-path hosting.** Instance base URLs may include a sub-path (`WOODPECKER_ROOT_PATH` installs).
 

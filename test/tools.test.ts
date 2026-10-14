@@ -121,6 +121,8 @@ function fakeWoodpecker(url: URL, method = "GET"): Response {
       return json(writeRun(26, { status: "canceled", event: "push", started: 0 }));
     case url.pathname === "/api/repos/7/pipelines/27":
       return json(writeRun(27, { status: "error", event: "push", started: 0 }));
+    case url.pathname === "/api/repos/7/pipelines/29":
+      return json(writeRun(29, { status: "killed", event: "pull_request", started: 0 }));
     case url.pathname === "/api/repos/7/pipelines/25":
       return json(writeRun(25, { status: "running", event: "push" }));
     case url.pathname === "/api/repos/7/pipelines/24":
@@ -766,7 +768,8 @@ describe("write tools", () => {
     expect(textOf(await call("restart_pipeline", { number: 25 }))).toContain("only finished pipelines");
     expect(textOf(await call("restart_pipeline", { number: 24 }))).toContain("only finished pipelines");
     expect(textOf(await call("restart_pipeline", { number: 22 }))).toContain("comes from a fork");
-    expect(textOf(await call("restart_pipeline", { number: 26 }))).toContain("canceled before it ran");
+    expect(textOf(await call("restart_pipeline", { number: 26 }))).toContain("stopped before it ran");
+    expect(textOf(await call("restart_pipeline", { number: 29 }))).toContain("stopped before it ran");
     expect(posted.length).toBe(before);
   });
 

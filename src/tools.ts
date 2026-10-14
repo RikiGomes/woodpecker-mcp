@@ -954,10 +954,10 @@ export function registerTools(server: McpServer, context: ToolContext): void {
     const pipeline = await client.getPipeline(repoId, pipelineNumber);
     if (PROTECTED_EVENTS.has(pipeline.event ?? "")) {
       throw new Error(
-        `Refusing to ${action} pipeline #${pipeline.number}: it is a ${pipeline.event} pipeline, which may deploy or publish. Use the Woodpecker UI.`,
+        `Refusing to ${action} pipeline #${pipelineNumber}: it is a ${pipeline.event} pipeline, which may deploy or publish. Use the Woodpecker UI.`,
       );
     }
-    return { client, repoId, pipeline };
+    return { client, repoId, number: pipelineNumber, pipeline };
   };
 
   if (context.instances.some((instance) => allowsWrite(instance, "restart"))) {
@@ -968,7 +968,7 @@ export function registerTools(server: McpServer, context: ToolContext): void {
         annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
         description:
           "Re-runs a finished pipeline (success, failure, error, killed or canceled) as a new pipeline with the same commit and config, and returns the new pipeline's number, status and web URL. " +
-          "Refused for deployment, tag and release pipelines, for running, pending, blocked or declined ones, and for runs that may have skipped approval: fork pipelines and pipelines canceled before they ran, unless someone approved them. " +
+          "Refused for deployment, tag and release pipelines, for running, pending, blocked or declined ones, and for runs that may have skipped approval: fork pipelines and pipelines stopped before they ran, unless someone approved them. " +
           "Never changes the event, deploy target or variables. Follow the new run with get_pipeline. " +
           UNTRUSTED_NOTE,
         inputSchema: {
@@ -979,21 +979,22 @@ export function registerTools(server: McpServer, context: ToolContext): void {
       },
       async ({ instance, repo, number }) =>
         run(async () => {
-          const { client, repoId, pipeline } = await writeTarget("restart", instance, repo, number);
+          const { client, repoId, number: target, pipeline } = await writeTarget("restart", instance, repo, number);
           if (!RESTARTABLE_STATES.has(pipeline.status ?? "")) {
-            throw new Error(`Pipeline #${pipeline.number} is ${pipeline.status ?? "in an unknown state"}; only finished pipelines can be restarted.`);
+            throw new Error(`Pipeline #${target} is ${pipeline.status ?? "in an unknown state"}; only finished pipelines can be restarted.`);
           }
-          // Woodpecker's restart skips the approval gate, and a run canceled
-          // while blocked looks like any other canceled run.
-          if (!pipeline.reviewed_by && (pipeline.from_fork || pipeline.status === "canceled")) {
+          // Woodpecker's restart skips the approval gate, and a run stopped
+          // while blocked looks like any other run stopped before it started.
+          const stoppedBeforeStart = (pipeline.status === "canceled" || pipeline.status === "killed") && !pipeline.started;
+          if (!pipeline.reviewed_by && (pipeline.from_fork || stoppedBeforeStart)) {
             throw new Error(
-              `Refusing to restart pipeline #${pipeline.number}: it ${pipeline.from_fork ? "comes from a fork" : "was canceled before it ran"} and was never approved, so restarting could skip Woodpecker's approval gate. Use the Woodpecker UI.`,
+              `Refusing to restart pipeline #${target}: it ${pipeline.from_fork ? "comes from a fork" : "was stopped before it ran"} and was never approved, so restarting could skip Woodpecker's approval gate. Use the Woodpecker UI.`,
             );
           }
-          const restarted = await client.restartPipeline(repoId, pipeline.number);
+          const restarted = await client.restartPipeline(repoId, target);
           return ok({
             ...repoRef(repo, repoId),
-            restarted: pipeline.number,
+            restarted: target,
             number: restarted.number,
             status: restarted.status,
             url: client.pipelineUrl(repoId, restarted.number),
@@ -1021,18 +1022,17 @@ export function registerTools(server: McpServer, context: ToolContext): void {
       },
       async ({ instance, repo, number }) =>
         run(async () => {
-          const { client, repoId, pipeline } = await writeTarget("cancel", instance, repo, number);
+          const { client, repoId, number: target, pipeline } = await writeTarget("cancel", instance, repo, number);
           if (!CANCELABLE_STATES.has(pipeline.status ?? "")) {
-            throw new Error(`Pipeline #${pipeline.number} is ${pipeline.status ?? "in an unknown state"}; only pending or running pipelines can be canceled.`);
+            throw new Error(`Pipeline #${target} is ${pipeline.status ?? "in an unknown state"}; only pending or running pipelines can be canceled.`);
           }
-          await client.cancelPipeline(repoId, pipeline.number);
-          const after = await client.getPipeline(repoId, pipeline.number);
-          return ok({
-            ...repoRef(repo, repoId),
-            number: after.number,
-            status: after.status,
-            url: client.pipelineUrl(repoId, after.number),
-          });
+          await client.cancelPipeline(repoId, target);
+          // The cancel already happened; a failed status read must not report it as failed.
+          const status = await client.getPipeline(repoId, target).then(
+            (after) => after.status,
+            () => "unknown (cancel was accepted; check with get_pipeline)",
+          );
+          return ok({ ...repoRef(repo, repoId), number: target, status, url: client.pipelineUrl(repoId, target) });
         }),
     );
   }

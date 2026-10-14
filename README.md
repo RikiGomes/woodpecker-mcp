@@ -71,10 +71,10 @@ An empty `ALLOW_WRITE` means none. Unknown values are dropped with a warning. A 
 Woodpecker tokens are not scoped, so these guards are what keeps the tools safe. Every write first reads the pipeline and refuses:
 
 - deployment, tag and release pipelines, which may deploy or publish;
-- restarting anything that is not finished, and unapproved fork pipelines or pipelines canceled before they ran (which may have been waiting for approval), because Woodpecker's restart skips the approval gate;
+- restarting anything that is not finished, and unapproved fork pipelines or pipelines stopped before they ran (which may have been waiting for approval), because Woodpecker's restart skips the approval gate;
 - cancelling anything that is not pending or running; a blocked pipeline waiting for approval is left to a human.
 
-A restart sends no query string: on that endpoint Woodpecker turns `event`/`deploy_to` into a deployment and every other parameter into an environment variable. The write tools are advertised without `readOnlyHint`, so MCP clients ask before calling them unless you allow them.
+A restart sends no query string: on that endpoint Woodpecker turns `event`/`deploy_to` into a deployment and every other parameter into an environment variable. The write tools are advertised with `readOnlyHint: false`, so MCP clients ask before calling them unless you allow them.
 
 ## Usage with Claude Code
 

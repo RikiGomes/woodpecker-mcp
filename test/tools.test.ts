@@ -37,6 +37,43 @@ const PIPELINE = {
   ],
 };
 
+const apiRun = (number: number, status: string, testState: string, commit: string, message: string) => ({
+  id: 1000 + number,
+  number,
+  status,
+  branch: "main",
+  message,
+  commit,
+  author: "bob",
+  created: 1_750_000_000 + number,
+  started: 1_750_000_010 + number,
+  finished: 1_750_000_070 + number,
+  workflows: [
+    {
+      id: number,
+      name: "build",
+      state: status,
+      children: [
+        { id: number * 10 + 1, name: "lint", state: "success", exit_code: 0 },
+        { id: number * 10 + 2, name: "test", state: testState, exit_code: testState === "success" ? 0 : 1 },
+      ],
+    },
+  ],
+});
+const API_RUNS = [
+  apiRun(22, "failure", "failure", "2222222222abc", "Bump parser"),
+  apiRun(21, "failure", "failure", "1111111111abc", "Refactor\n\nbody"),
+  apiRun(20, "success", "success", "0000000000abc", "Green"),
+];
+
+// 45 failing runs on main back to #4, the last green one is #3; pushes only.
+const LONG_RUNS = Array.from({ length: 45 }, (_, i) => apiRun(45 - i, 45 - i > 3 ? "failure" : "success", 45 - i > 3 ? "failure" : "success", `${45 - i}`.padStart(10, "0"), `Change ${45 - i} ${"x".repeat(200)}`));
+const paged = (runs: unknown[], url: URL) => {
+  const perPage = Number(url.searchParams.get("perPage") ?? 50);
+  const page = Number(url.searchParams.get("page") ?? 1);
+  return runs.slice((page - 1) * perPage, page * perPage);
+};
+
 const requested: URL[] = [];
 
 function fakeWoodpecker(url: URL): Response {
@@ -90,6 +127,28 @@ function fakeWoodpecker(url: URL): Response {
         stats: { worker_count: 2, pending_count: 1, waiting_on_deps_count: 0, running_count: 0 },
         paused: false,
       });
+    case url.pathname === "/api/repos/lookup/acme/api":
+      return json({ id: 10, full_name: "acme/api" });
+    case url.pathname === "/api/repos/10":
+      return json({ id: 10, full_name: "acme/api", default_branch: "main" });
+    case url.pathname === "/api/repos/10/pipelines":
+      return json(paged(API_RUNS.map(({ workflows: _workflows, ...summary }) => summary), url));
+    case url.pathname === "/api/repos/lookup/acme/long":
+      return json({ id: 11, full_name: "acme/long" });
+    case url.pathname === "/api/repos/11":
+      return json({ id: 11, full_name: "acme/long", default_branch: "main" });
+    case url.pathname === "/api/repos/11/pipelines":
+      return json(paged(LONG_RUNS.map(({ workflows: _workflows, ...summary }) => summary), url));
+    case /^\/api\/repos\/11\/pipelines\/\d+$/.test(url.pathname):
+      return json(LONG_RUNS.find((run) => url.pathname.endsWith(`/${run.number}`)));
+    case /^\/api\/repos\/11\/pipelines\/\d+\/config$/.test(url.pathname):
+      return new Response("boom", { status: 500 });
+    case /^\/api\/repos\/10\/pipelines\/\d+$/.test(url.pathname):
+      return json(API_RUNS.find((run) => url.pathname.endsWith(`/${run.number}`)));
+    case /^\/api\/repos\/10\/pipelines\/\d+\/config$/.test(url.pathname):
+      return json([
+        { name: ".woodpecker/build.yaml", hash: url.pathname.includes("/22/") ? "new" : "old", data: b64("steps: {}\n") },
+      ]);
     case url.pathname === "/api/repos/lookup/acme/webapp":
       return json({ id: 7, full_name: "acme/webapp" });
     case url.pathname === "/api/repos/7/pipelines":
@@ -152,6 +211,7 @@ describe("woodpecker MCP tools", () => {
   it("exposes the read-only tools", async () => {
     const { tools } = await client.listTools();
     expect(tools.map((t) => t.name).sort()).toEqual([
+      "compare_pipelines",
       "diagnose_pipeline",
       "get_pipeline",
       "get_pipeline_config",
@@ -325,6 +385,7 @@ describe("woodpecker MCP tools", () => {
       ["list_crons", { repo: "acme/webapp" }, 200],
       ["list_agents", {}, 170],
       ["get_queue_info", {}, 280],
+      ["compare_pipelines", { repo: "acme/api" }, 600],
     ];
     for (const [name, args, budget] of budgets) {
       const text = textOf(await client.callTool({ name, arguments: { instance: "acme", ...args } }));
@@ -452,6 +513,60 @@ describe("woodpecker MCP tools", () => {
     expect(payload.verdict).toContain("without a failed step");
     expect(payload.verdict).toContain("get_pipeline_config");
     expect(payload.errors).toEqual([{ type: "linter", message: "bad yaml" }]);
+  });
+
+  it("compare_pipelines diffs the newest failure against the last green run", async () => {
+    const payload = JSON.parse(
+      textOf(await client.callTool({ name: "compare_pipelines", arguments: { instance: "acme", repo: "acme/api" } })),
+    );
+    expect(payload).toMatchObject({
+      repo_id: 10,
+      branch: "main",
+      good: { number: 20, status: "success", commit: "0000000000" },
+      bad: { number: 22, status: "failure", message: "Bump parser" },
+      between: ["#21 failure 1111111111 Refactor"],
+      steps: [{ workflow: "build", step: "test", good: "success", bad: "failure", exit_code: 1 }],
+      config_changed: [".woodpecker/build.yaml"],
+      failed_step_ids: [222],
+    });
+    expect(JSON.stringify(payload)).not.toContain("steps: {}");
+  });
+
+  it("compare_pipelines refuses a green run as `bad`, a missing baseline and a reversed pair", async () => {
+    const green = await client.callTool({ name: "compare_pipelines", arguments: { instance: "acme", repo: "acme/api", bad: 20 } });
+    expect(green.isError).toBe(true);
+    expect(textOf(green)).toContain("#20 is success");
+    const noBaseline = await client.callTool({ name: "compare_pipelines", arguments: { instance: "acme", repo: "acme/webapp", branch: "feature/x" } });
+    expect(noBaseline.isError).toBe(true);
+    expect(textOf(noBaseline)).toContain("No successful pipeline before #12");
+    const reversed = await client.callTool({ name: "compare_pipelines", arguments: { instance: "acme", repo: "acme/api", bad: 21, good: 22 } });
+    expect(textOf(reversed)).toContain("must be older");
+    const explicit = JSON.parse(
+      textOf(await client.callTool({ name: "compare_pipelines", arguments: { instance: "acme", repo: "acme/api", bad: 22, good: 20 } })),
+    );
+    expect(explicit.between).toEqual(["#21 failure 1111111111 Refactor"]);
+    const otherBranch = await client.callTool({ name: "compare_pipelines", arguments: { instance: "acme", repo: "acme/api", bad: 22, branch: "dev" } });
+    expect(textOf(otherBranch)).toContain("ran on main, not dev");
+    const redBaseline = JSON.parse(
+      textOf(await client.callTool({ name: "compare_pipelines", arguments: { instance: "acme", repo: "acme/api", bad: 22, good: 21 } })),
+    );
+    expect(redBaseline.warnings).toEqual(["`good` #21 is failure."]);
+  });
+
+  it("compare_pipelines pages back through push runs to the last green one", async () => {
+    requested.length = 0;
+    const payload = JSON.parse(
+      textOf(await client.callTool({ name: "compare_pipelines", arguments: { instance: "acme", repo: "acme/long" } })),
+    );
+    const listCalls = requested.filter((url) => url.pathname === "/api/repos/11/pipelines");
+    expect(listCalls.map((url) => url.searchParams.get("page"))).toEqual(["1", "2", "3"]);
+    expect(listCalls[0]?.searchParams.get("event")).toBe("push,manual,cron");
+    expect(payload).toMatchObject({ good: { number: 3 }, bad: { number: 45 }, between_truncated: true });
+    expect(payload.between).toHaveLength(20);
+    expect(payload.between[0]).toMatch(/^#44 failure 0000000044 Change 44 x+\.\.\.$/);
+    expect(payload.between[0].length).toBeLessThan(120);
+    expect(payload.config_changed).toBeUndefined();
+    expect(payload.config_error).toContain("HTTP 500");
   });
 
   it("permission-gated tools surface Woodpecker's 403 as a tool error", async () => {

@@ -684,7 +684,11 @@ export function registerTools(server: McpServer, context: ToolContext): void {
           ref = repoRef(repo, repoId);
           if (scope === "org") {
             const orgId = (await client.getRepo(repoId)).org_id;
-            if (!orgId) throw new Error(`Woodpecker did not report an organization for repository ${repo}.`);
+            if (!orgId) {
+              throw new Error(
+                `Woodpecker did not report an organization for repository ${repo}; use scope "repo" or "global" instead.`,
+              );
+            }
             secrets = await client.listOrgSecrets(orgId);
           } else {
             secrets = await client.listSecrets(repoId);
@@ -692,6 +696,7 @@ export function registerTools(server: McpServer, context: ToolContext): void {
         }
         return ok({
           ...ref,
+          scope: scope ?? "repo",
           secrets: (secrets ?? []).map((secret) => ({
             name: secret.name,
             events: secret.events ?? [],

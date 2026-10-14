@@ -70,6 +70,8 @@ function fakeWoodpecker(url: URL): Response {
       return json([{ name: "docker_password", value: "hunter2", events: ["push"], images: [], note: "" }]);
     case url.pathname === "/api/repos/7":
       return json({ id: 7, full_name: "acme/webapp", org_id: 3 });
+    case url.pathname === "/api/repos/8":
+      return json({ id: 8, full_name: "acme/docs" });
     case url.pathname === "/api/orgs/3/secrets":
       return json([{ name: "registry_token", value: "org-hunter2", events: ["push", "tag"], images: ["woodpeckerci/plugin-docker-buildx"], note: "shared" }]);
     case url.pathname === "/api/secrets":
@@ -471,6 +473,7 @@ describe("woodpecker MCP tools", () => {
       await client.callTool({ name: "list_secrets", arguments: { instance: "acme", repo: "acme/webapp" } }),
     );
     expect(JSON.parse(text).secrets).toEqual([{ name: "docker_password", events: ["push"] }]);
+    expect(JSON.parse(text).scope).toBe("repo");
     expect(text).not.toContain("hunter2");
   });
 
@@ -486,7 +489,7 @@ describe("woodpecker MCP tools", () => {
 
   it("list_secrets lists global secrets without a repo", async () => {
     const text = textOf(await client.callTool({ name: "list_secrets", arguments: { instance: "acme", scope: "global" } }));
-    expect(JSON.parse(text)).toEqual({ secrets: [{ name: "sonar_token", events: ["push"] }] });
+    expect(JSON.parse(text)).toEqual({ scope: "global", secrets: [{ name: "sonar_token", events: ["push"] }] });
     expect(text).not.toContain("global-hunter2");
   });
 
@@ -494,6 +497,12 @@ describe("woodpecker MCP tools", () => {
     const result = await client.callTool({ name: "list_secrets", arguments: { instance: "acme", scope: "org" } });
     expect(result.isError).toBe(true);
     expect(textOf(result)).toContain("needs `repo`");
+  });
+
+  it("list_secrets explains a repository without an organization", async () => {
+    const result = await client.callTool({ name: "list_secrets", arguments: { instance: "acme", repo: "8", scope: "org" } });
+    expect(result.isError).toBe(true);
+    expect(textOf(result)).toContain('use scope "repo" or "global"');
   });
 
   it("list_agents never relays the agent token", async () => {

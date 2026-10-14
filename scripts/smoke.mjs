@@ -95,7 +95,13 @@ setTimeout(() => {
 
   const call = responses.find((r) => r.id === 3)?.result;
   if (call?.isError) fail(`list_instances returned an error: ${call.content?.[0]?.text}`);
-  if (!call?.content?.[0]?.text?.includes('ci.example.com')) {
+  let instances;
+  try {
+    instances = JSON.parse(call?.content?.[0]?.text);
+  } catch {
+    instances = undefined;
+  }
+  if (!Array.isArray(instances) || !instances.some((i) => i?.url === 'https://ci.example.com')) {
     fail(`list_instances did not report the configured instance: ${JSON.stringify(call)}`);
   }
 

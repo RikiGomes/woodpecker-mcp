@@ -100,7 +100,7 @@ Alternatively, clone it once and point at the local build:
 ## Development
 
 Node >= 22.18 runs the TypeScript sources directly (type stripping); the built
-`dist/` that users run needs only Node 20.12:
+`dist/` that users run needs only Node 22.12:
 
 ```bash
 npm install

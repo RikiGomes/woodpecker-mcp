@@ -1,9 +1,8 @@
 // Smoke test for the built server: spawns dist/index.js, speaks stdio
 // JSON-RPC to it, and asserts it advertises the expected read-only tools.
 //
-// Uses only Node built-ins so it runs on the oldest supported runtime, where
-// the vitest toolchain cannot (rolldown requires ^20.19 || >=22.12). This is
-// what validates the `engines` floor in CI.
+// Uses only Node built-ins, so it checks the shipped artifact rather than the
+// sources the unit tests import.
 import { spawn } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';

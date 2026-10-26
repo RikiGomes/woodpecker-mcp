@@ -60,6 +60,8 @@ export interface Pipeline {
   from_fork?: boolean;
   /** Login of whoever approved or declined a blocked pipeline. */
   reviewed_by?: string;
+  /** Manual or cron variables; a restart copies them into the new pipeline. */
+  variables?: Record<string, string> | null;
   /** Only populated by the single-pipeline endpoint, not the list endpoint. */
   workflows?: Workflow[];
 }
@@ -377,7 +379,8 @@ export class WoodpeckerClient {
     } catch (cause) {
       const reason = cause instanceof Error ? (cause.cause ?? cause) : cause;
       throw new WoodpeckerApiError(
-        `Request to instance "${this.instance.name}" (${url.origin}) failed: ${reason instanceof Error ? reason.message : String(reason)}`,
+        `Request to instance "${this.instance.name}" (${url.origin}) failed: ${reason instanceof Error ? reason.message : String(reason)}` +
+          (method === "GET" ? "" : `. The ${method} may still have been applied; check the pipeline before retrying.`),
       );
     }
 

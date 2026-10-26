@@ -101,6 +101,8 @@ function fakeWoodpecker(url: URL, method = "GET"): Response {
         return json({ id: 951, number: 28, status: "pending" });
       case "/api/repos/7/pipelines/12":
         return json({ ...PIPELINE, id: 950, number: 15, status: "pending", workflows: undefined });
+      case "/api/repos/7/pipelines/31":
+        throw new TypeError("fetch failed", { cause: new Error("The operation was aborted due to timeout") });
       case "/api/repos/7/pipelines/20/cancel":
         canceled20 = true;
         return new Response(null, { status: 204 });
@@ -123,6 +125,10 @@ function fakeWoodpecker(url: URL, method = "GET"): Response {
       return json(writeRun(27, { status: "error", event: "push", started: 0 }));
     case url.pathname === "/api/repos/7/pipelines/29":
       return json(writeRun(29, { status: "killed", event: "pull_request", started: 0 }));
+    case url.pathname === "/api/repos/7/pipelines/30":
+      return json(writeRun(30, { status: "success", event: "manual", variables: { DEPLOY: "true" } }));
+    case url.pathname === "/api/repos/7/pipelines/31":
+      return json(writeRun(31, { status: "failure", event: "push" }));
     case url.pathname === "/api/repos/7/pipelines/25":
       return json(writeRun(25, { status: "running", event: "push" }));
     case url.pathname === "/api/repos/7/pipelines/24":
@@ -771,6 +777,20 @@ describe("write tools", () => {
     expect(textOf(await call("restart_pipeline", { number: 26 }))).toContain("stopped before it ran");
     expect(textOf(await call("restart_pipeline", { number: 29 }))).toContain("stopped before it ran");
     expect(posted.length).toBe(before);
+  });
+
+  it("restart_pipeline refuses a pipeline with manual or cron variables", async () => {
+    const before = posted.length;
+    const result = await call("restart_pipeline", { number: 30 });
+    expect(result.isError).toBe(true);
+    expect(textOf(result)).toContain("manual or cron variables");
+    expect(posted.length).toBe(before);
+  });
+
+  it("restart_pipeline warns that a failed POST may still have been applied", async () => {
+    const result = await call("restart_pipeline", { number: 31 });
+    expect(result.isError).toBe(true);
+    expect(textOf(result)).toContain("may still have been applied");
   });
 
   it("cancel_pipeline refuses a pipeline that is not pending or running", async () => {

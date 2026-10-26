@@ -14,7 +14,7 @@ export interface WoodpeckerInstance {
   writeRepos?: readonly string[];
 }
 
-export const WRITE_ACTIONS = ["restart", "cancel"] as const;
+export const WRITE_ACTIONS = ["restart", "cancel", "trigger", "cron"] as const;
 export type WriteAction = (typeof WRITE_ACTIONS)[number];
 
 const isWriteAction = (value: string): value is WriteAction => (WRITE_ACTIONS as readonly string[]).includes(value);

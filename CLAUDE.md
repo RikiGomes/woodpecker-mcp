@@ -1,19 +1,23 @@
 # woodpecker-mcp
 
 MCP stdio server exposing Woodpecker CI pipeline status and logs, plus guarded
-restart and cancel.
+restart, cancel, trigger and run-cron.
 See [README.md](README.md) for usage; this file records the invariants that are
 easy to break and not obvious from any single file.
 
 ## Invariants
 
 - **Read-mostly by contract.** Reads are GET only. The only writes are
-  `restart_pipeline` and `cancel_pipeline`: POST only, never DELETE/PATCH, on
-  by default and narrowed per instance with `ALLOW_WRITE` / `WRITE_REPOS`.
-  They refuse deployment, tag and release pipelines; restart sends no query
-  string (it would become a deployment or env vars) and refuses runs that
-  skipped approval or carry manual/cron variables. Approve, secrets, deletes
-  and settings stay out: adding another write tool needs an explicit request.
+  `restart_pipeline`, `cancel_pipeline`, `trigger_pipeline` and `run_cron`:
+  POST only, never DELETE/PATCH, on by default and narrowed per instance with
+  `ALLOW_WRITE` / `WRITE_REPOS`. Restart and cancel refuse deployment, tag and
+  release pipelines; restart sends no query string (it would become a
+  deployment or env vars) and refuses runs that skipped approval or carry
+  manual/cron variables. Trigger sends a body of only `{branch}` (never
+  `variables`) for a branch the forge lists; run_cron refuses disabled crons.
+  Neither can tell a deploy workflow gated on `manual`/`cron` from any other.
+  Approve, secrets, deletes, cron edits and settings stay out: adding another
+  write tool needs an explicit request.
 - **stdout belongs to the JSON-RPC protocol.** Never `console.log` /
   `process.stdout.write` anywhere reachable from the server: it corrupts the
   message stream. All human-readable output goes to stderr via `console.error`.

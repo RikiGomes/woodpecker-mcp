@@ -15,7 +15,7 @@ describe("loadInstances", () => {
       WOODPECKER_TOKEN: "tok",
     });
     expect(instances).toEqual([
-      { name: "default", url: "https://ci.example.com", token: "tok", writes: ["restart", "cancel"] },
+      { name: "default", url: "https://ci.example.com", token: "tok", writes: ["restart", "cancel", "trigger", "cron"] },
     ]);
   });
 
@@ -332,14 +332,15 @@ describe("write settings", () => {
   const pair = { WOODPECKER_ACME_URL: "https://ci.example.com", WOODPECKER_ACME_TOKEN: "a" };
 
   it("enables every write tool when ALLOW_WRITE is unset", () => {
-    expect(loadInstances(pair)[0]?.writes).toEqual(["restart", "cancel"]);
+    expect(loadInstances(pair)[0]?.writes).toEqual(["restart", "cancel", "trigger", "cron"]);
   });
 
   it("reads ALLOW_WRITE per instance, including all, none and an empty value", () => {
     const writes = (value: string) => loadInstances({ ...pair, WOODPECKER_ACME_ALLOW_WRITE: value })[0]?.writes;
     expect(writes("cancel")).toEqual(["cancel"]);
     expect(writes(" Restart , CANCEL ")).toEqual(["restart", "cancel"]);
-    expect(writes("all")).toEqual(["restart", "cancel"]);
+    expect(writes("trigger,cron")).toEqual(["trigger", "cron"]);
+    expect(writes("all")).toEqual(["restart", "cancel", "trigger", "cron"]);
     expect(writes("none")).toEqual([]);
     expect(writes("")).toEqual([]);
   });

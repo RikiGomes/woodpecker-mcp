@@ -1,9 +1,9 @@
 {
   "name": "woodpecker-mcp",
-  "version": "0.2.0",
+  "version": "0.3.0-rc.1",
   "private": true,
   "type": "module",
-  "description": "MCP server for Woodpecker CI: pipeline status, logs and guarded restart/cancel across multiple self-hosted instances",
+  "description": "MCP server for Woodpecker CI: pipeline status, logs and guarded restart, cancel, trigger and cron runs across multiple self-hosted instances",
   "license": "MIT",
   "keywords": [
     "mcp",

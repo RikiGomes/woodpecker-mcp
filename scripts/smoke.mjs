@@ -28,6 +28,8 @@ const EXPECTED = [
   'list_secrets',
   'recent_activity',
   'restart_pipeline',
+  'run_cron',
+  'trigger_pipeline',
 ];
 
 const child = spawn(process.execPath, [join(root, 'dist', 'index.js')], {

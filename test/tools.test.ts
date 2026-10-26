@@ -77,7 +77,9 @@ const paged = (runs: unknown[], url: URL) => {
 
 const requested: URL[] = [];
 const posted: URL[] = [];
+const postedBodies: Array<string | undefined> = [];
 let canceled20 = false;
+const MANY_BRANCHES = Array.from({ length: 120 }, (_, i) => `branch-${i + 1}`);
 
 const writeRun = (number: number, fields: Record<string, unknown>) => ({
   id: 3000 + number,
@@ -90,13 +92,24 @@ const writeRun = (number: number, fields: Record<string, unknown>) => ({
   ...fields,
 });
 
-function fakeWoodpecker(url: URL, method = "GET"): Response {
+function fakeWoodpecker(url: URL, method = "GET", body?: string): Response {
   requested.push(url);
   const json = (payload: unknown) =>
     new Response(JSON.stringify(payload), { status: 200, headers: { "Content-Type": "application/json" } });
   if (method === "POST") {
     posted.push(url);
+    postedBodies.push(body);
     switch (url.pathname) {
+      case "/api/repos/7/pipelines":
+        return json({ id: 960, number: 40, status: "pending", event: "manual", branch: JSON.parse(body ?? "{}").branch });
+      case "/api/repos/8/pipelines":
+        return new Response(null, { status: 204 });
+      case "/api/repos/10/pipelines":
+        return json({ id: 961, number: 99, status: "blocked", event: "manual" });
+      case "/api/repos/7/cron/1":
+        return json({ id: 962, number: 41, status: "pending", event: "cron" });
+      case "/api/repos/8/cron/4":
+        return json(null);
       case "/api/repos/7/pipelines/27":
         return json({ id: 951, number: 28, status: "pending" });
       case "/api/repos/7/pipelines/12":
@@ -149,6 +162,16 @@ function fakeWoodpecker(url: URL, method = "GET"): Response {
       ]);
     case url.pathname === "/api/repos/7/branches":
       return json(["main", "feature/x"]);
+    case url.pathname === "/api/repos/8/branches":
+      return json(["main"]);
+    case url.pathname === "/api/repos/10/branches":
+      return json(paged(MANY_BRANCHES, url));
+    case url.pathname === "/api/repos/7/cron/1":
+      return json({ id: 1, name: "nightly", branch: "main", enabled: true, variables: { DEPLOY_ENV: "staging" } });
+    case url.pathname === "/api/repos/7/cron/2":
+      return json({ id: 2, name: "weekly", branch: "main", enabled: false });
+    case url.pathname === "/api/repos/8/cron/4":
+      return json({ id: 4, name: "docs", enabled: true });
     case url.pathname === "/api/repos/7/pull_requests":
       return json([{ index: 42, title: "Add feature X" }]);
     case url.pathname === "/api/repos/7/pipelines/12/config":
@@ -160,9 +183,9 @@ function fakeWoodpecker(url: URL, method = "GET"): Response {
     case url.pathname === "/api/repos/7/secrets":
       return json([{ name: "docker_password", value: "hunter2", events: ["push"], images: [], note: "" }]);
     case url.pathname === "/api/repos/7":
-      return json({ id: 7, full_name: "acme/webapp", org_id: 3 });
+      return json({ id: 7, full_name: "acme/webapp", org_id: 3, default_branch: "main" });
     case url.pathname === "/api/repos/8":
-      return json({ id: 8, full_name: "acme/docs" });
+      return json({ id: 8, full_name: "acme/docs", default_branch: "main" });
     case url.pathname === "/api/orgs/3/secrets":
       return json([{ name: "registry_token", value: "org-hunter2", events: ["push", "tag"], images: ["woodpeckerci/plugin-docker-buildx"], note: "shared" }]);
     case url.pathname === "/api/secrets":
@@ -237,7 +260,7 @@ function fakeWoodpecker(url: URL, method = "GET"): Response {
 
 async function connectedClient(instances: WoodpeckerInstance[]) {
   const fetchImpl = vi.fn(async (input: string | URL | Request, init?: RequestInit) =>
-    fakeWoodpecker(input instanceof URL ? input : new URL(String(input)), init?.method),
+    fakeWoodpecker(input instanceof URL ? input : new URL(String(input)), init?.method, init?.body as string | undefined),
   ) as unknown as typeof fetch;
 
   const server = new McpServer({ name: "woodpecker", version: "0.0.0-test" });
@@ -249,6 +272,7 @@ async function connectedClient(instances: WoodpeckerInstance[]) {
   return client;
 }
 
+const WRITE_TOOLS = ["restart_pipeline", "cancel_pipeline", "trigger_pipeline", "run_cron"];
 const INSTANCES = [{ name: "acme", url: "https://ci.example.com", token: "tok" }];
 
 function textOf(result: Awaited<ReturnType<Client["callTool"]>>): string {
@@ -282,17 +306,21 @@ describe("woodpecker MCP tools", () => {
       "list_secrets",
       "recent_activity",
       "restart_pipeline",
+      "run_cron",
+      "trigger_pipeline",
     ]);
   });
 
   it("marks read tools read-only and write tools not", async () => {
     const { tools } = await client.listTools();
     for (const tool of tools) {
-      const write = tool.name === "restart_pipeline" || tool.name === "cancel_pipeline";
+      const write = WRITE_TOOLS.includes(tool.name);
       expect(tool.annotations, tool.name).toMatchObject({ readOnlyHint: !write, openWorldHint: true });
     }
     expect(tools.find((t) => t.name === "cancel_pipeline")?.annotations?.destructiveHint).toBe(true);
-    expect(tools.find((t) => t.name === "restart_pipeline")?.annotations?.destructiveHint).toBe(false);
+    for (const name of ["restart_pipeline", "trigger_pipeline", "run_cron"]) {
+      expect(tools.find((t) => t.name === name)?.annotations?.destructiveHint, name).toBe(false);
+    }
   });
 
   it("get_step_logs caps a huge tail by size and says so", async () => {
@@ -808,8 +836,7 @@ describe("write tools", () => {
   it("are not registered when every instance sets ALLOW_WRITE=none", async () => {
     const readOnly = await connectedClient([{ ...INSTANCES[0]!, writes: [] }]);
     const names = (await readOnly.listTools()).tools.map((t) => t.name);
-    expect(names).not.toContain("restart_pipeline");
-    expect(names).not.toContain("cancel_pipeline");
+    for (const name of WRITE_TOOLS) expect(names).not.toContain(name);
     expect(names).toContain("get_pipeline");
   });
 
@@ -835,5 +862,105 @@ describe("write tools", () => {
     expect(posted.length).toBe(before);
     const allowed = await limited.callTool({ name: "restart_pipeline", arguments: { instance: "acme", repo: "7", number: 12 } });
     expect(allowed.isError).toBeFalsy();
+  });
+
+  it("trigger_pipeline starts a manual pipeline on the default branch with only the branch in the body", async () => {
+    const before = posted.length;
+    const result = await call("trigger_pipeline", {});
+    expect(result.isError).toBeFalsy();
+    expect(JSON.parse(textOf(result))).toEqual({
+      repo_id: 7,
+      branch: "main",
+      number: 40,
+      status: "pending",
+      url: "https://ci.example.com/repos/7/pipeline/40",
+    });
+    expect(posted.slice(before).map((url) => url.pathname + url.search)).toEqual(["/api/repos/7/pipelines"]);
+    expect(JSON.parse(postedBodies.at(-1) ?? "")).toEqual({ branch: "main" });
+  });
+
+  it("trigger_pipeline takes an explicit branch and pages through the forge's branches", async () => {
+    const result = await call("trigger_pipeline", { repo: "acme/api", branch: " branch-120 " });
+    expect(result.isError).toBeFalsy();
+    expect(JSON.parse(textOf(result))).toMatchObject({ branch: "branch-120", number: 99, status: "blocked" });
+    expect(JSON.parse(postedBodies.at(-1) ?? "")).toEqual({ branch: "branch-120" });
+  });
+
+  it("trigger_pipeline never forwards variables or a message, and keeps odd branch names in the body", async () => {
+    const before = posted.length;
+    const result = await client.callTool({
+      name: "trigger_pipeline",
+      arguments: { instance: "acme", repo: "acme/webapp", branch: "feature/x", variables: { DEPLOY: "prod" }, message: "hi" },
+    });
+    expect(result.isError).toBeFalsy();
+    expect(JSON.parse(postedBodies.at(-1) ?? "")).toEqual({ branch: "feature/x" });
+    const odd = await call("trigger_pipeline", { branch: "../x?event=deployment" });
+    expect(odd.isError).toBe(true);
+    expect(posted.slice(before).map((url) => url.pathname + url.search)).toEqual(["/api/repos/7/pipelines"]);
+  });
+
+  it("trigger_pipeline refuses a branch the forge does not have", async () => {
+    const before = posted.length;
+    const pagesBefore = requested.filter((url) => url.pathname === "/api/repos/7/branches").length;
+    const result = await call("trigger_pipeline", { branch: "nope" });
+    expect(result.isError).toBe(true);
+    expect(textOf(result)).toContain('Branch "nope" was not found');
+    expect(posted.length).toBe(before);
+    // The fixture ignores paging, so the second page adds nothing and the search stops.
+    expect(requested.filter((url) => url.pathname === "/api/repos/7/branches").length - pagesBefore).toBe(2);
+  });
+
+  it("trigger_pipeline reports when Woodpecker created no pipeline", async () => {
+    const result = await call("trigger_pipeline", { repo: "8" });
+    expect(result.isError).toBeFalsy();
+    expect(JSON.parse(textOf(result))).toMatchObject({ branch: "main", number: null, note: expect.stringContaining("no pipeline") });
+  });
+
+  it("run_cron runs an enabled cron job and returns the new pipeline", async () => {
+    const before = posted.length;
+    const result = await call("run_cron", { cron_id: 1 });
+    expect(result.isError).toBeFalsy();
+    expect(JSON.parse(textOf(result))).toEqual({
+      repo_id: 7,
+      cron: "nightly",
+      number: 41,
+      status: "pending",
+      url: "https://ci.example.com/repos/7/pipeline/41",
+    });
+    const sent = posted.slice(before);
+    expect(sent.map((url) => url.pathname + url.search)).toEqual(["/api/repos/7/cron/1"]);
+    expect(postedBodies.at(-1)).toBeUndefined();
+  });
+
+  it("run_cron reports when Woodpecker created no pipeline", async () => {
+    const result = await call("run_cron", { repo: "8", cron_id: 4 });
+    expect(result.isError).toBeFalsy();
+    expect(JSON.parse(textOf(result))).toMatchObject({ cron: "docs", number: null });
+  });
+
+  it("run_cron refuses disabled and unknown cron jobs", async () => {
+    const before = posted.length;
+    const disabled = await call("run_cron", { cron_id: 2 });
+    expect(disabled.isError).toBe(true);
+    expect(textOf(disabled)).toContain("it is disabled");
+    const missing = await call("run_cron", { cron_id: 3 });
+    expect(missing.isError).toBe(true);
+    expect(textOf(missing)).toContain("HTTP 404");
+    expect(posted.length).toBe(before);
+  });
+
+  it("trigger_pipeline and run_cron honour ALLOW_WRITE and WRITE_REPOS", async () => {
+    const before = posted.length;
+    const narrowed = await connectedClient([{ ...INSTANCES[0]!, writes: ["trigger"] }, { name: "other", url: "https://ci2.example.com", token: "tok2" }]);
+    const cron = await narrowed.callTool({ name: "run_cron", arguments: { instance: "acme", repo: "7", cron_id: 1 } });
+    expect(textOf(cron)).toContain("WOODPECKER_ACME_ALLOW_WRITE");
+    const limited = await connectedClient([{ ...INSTANCES[0]!, writeRepos: ["acme/webapp"] }]);
+    const trigger = await limited.callTool({ name: "trigger_pipeline", arguments: { instance: "acme", repo: "8" } });
+    expect(textOf(trigger)).toContain("not listed in WOODPECKER_ACME_WRITE_REPOS");
+    const cronRun = await limited.callTool({ name: "run_cron", arguments: { instance: "acme", repo: "8", cron_id: 4 } });
+    expect(textOf(cronRun)).toContain("not listed in WOODPECKER_ACME_WRITE_REPOS");
+    expect(posted.length).toBe(before);
+    const allowed = await limited.callTool({ name: "trigger_pipeline", arguments: { instance: "acme", repo: "7" } });
+    expect(JSON.parse(textOf(allowed))).toMatchObject({ branch: "main", number: 40 });
   });
 });

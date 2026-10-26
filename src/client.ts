@@ -348,6 +348,24 @@ export class WoodpeckerClient {
     await this.request<unknown>("POST", `/api/repos/${repoId}/pipelines/${pipelineNumber}/cancel`);
   }
 
+  getCron(repoId: number, cronId: number): Promise<Cron> {
+    return this.get<Cron>(`/api/repos/${repoId}/cron/${cronId}`);
+  }
+
+  /**
+   * Starts a manual pipeline on the head of `branch`. The body carries only
+   * the branch: Woodpecker would turn `variables` into environment variables
+   * of the new pipeline. Answers 204 with no body when no workflow matched.
+   */
+  triggerPipeline(repoId: number, branch: string): Promise<Pipeline | undefined> {
+    return this.request<Pipeline | undefined>("POST", `/api/repos/${repoId}/pipelines`, undefined, { branch });
+  }
+
+  /** Runs a cron job now; Woodpecker answers `null` when no workflow matched. */
+  runCron(repoId: number, cronId: number): Promise<Pipeline | null | undefined> {
+    return this.request<Pipeline | null | undefined>("POST", `/api/repos/${repoId}/cron/${cronId}`);
+  }
+
   /** Woodpecker UI link for a pipeline, handy for humans reading agent output. */
   pipelineUrl(repoId: number, pipelineNumber: number | "latest"): string {
     return `${this.instance.url}/repos/${repoId}/pipeline/${pipelineNumber}`;
@@ -361,6 +379,7 @@ export class WoodpeckerClient {
     method: "GET" | "POST",
     path: string,
     query?: Record<string, string | number | undefined>,
+    body?: Record<string, string>,
   ): Promise<T> {
     // Concatenate instead of `new URL(path, base)` so instances hosted under a
     // sub-path (WOODPECKER_ROOT_PATH) keep their prefix.
@@ -373,7 +392,11 @@ export class WoodpeckerClient {
     try {
       response = await this.fetchImpl(url, {
         method,
-        headers: { Authorization: `Bearer ${this.instance.token}` },
+        headers: {
+          Authorization: `Bearer ${this.instance.token}`,
+          ...(body ? { "Content-Type": "application/json" } : {}),
+        },
+        ...(body ? { body: JSON.stringify(body) } : {}),
         signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
       });
     } catch (cause) {

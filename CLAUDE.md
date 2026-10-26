@@ -38,8 +38,9 @@ easy to break and not obvious from any single file.
   `engines` says `>=22.12`, so the types stay on 22.x: typing against a newer
   major lets code compile that would crash on the version this package
   promises to support. (`process.loadEnvFile`, which needed 20.12 back when
-  the floor was 20, was exactly this bug once.) Dependabot is configured to ignore its majors; raise the
-  floor in `engines` first if you want newer types.
+  the floor was 20, was exactly this bug once.) Dependabot is configured to
+  ignore its majors; raise the floor in `engines` first if you want newer
+  types.
 - **The version lives only in `package.json`.** The server reads it at
   startup and smoke checks the advertised value. To release, bump it in a PR,
   then tag the merge commit `vX.Y.Z` and publish a GitHub release.

@@ -1,5 +1,5 @@
 // Smoke test for the built server: spawns dist/index.js, speaks stdio
-// JSON-RPC to it, and asserts it advertises the expected read-only tools.
+// JSON-RPC to it, and asserts it advertises the expected tools.
 //
 // Uses only Node built-ins, so it checks the shipped artifact rather than the
 // sources the unit tests import.
@@ -11,6 +11,7 @@ import { dirname, join } from 'node:path';
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const VERSION = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).version;
 const EXPECTED = [
+  'cancel_pipeline',
   'compare_pipelines',
   'diagnose_pipeline',
   'get_pipeline',
@@ -26,6 +27,7 @@ const EXPECTED = [
   'list_repos',
   'list_secrets',
   'recent_activity',
+  'restart_pipeline',
 ];
 
 const child = spawn(process.execPath, [join(root, 'dist', 'index.js')], {

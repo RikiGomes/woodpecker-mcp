@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { loadEnvFileIfPresent, loadInstances } from "./config.ts";
+import { loadEnvFileIfPresent, loadInstances, WRITE_ACTIONS } from "./config.ts";
 import { registerTools } from "./tools.ts";
 
 // src/ and dist/ both sit one level below the package root.
@@ -31,7 +31,8 @@ await server.connect(new StdioServerTransport());
 // stdout is the MCP protocol channel; status goes to stderr.
 console.error(
   `woodpecker-mcp ${SERVER_VERSION} ready, instances: ${
-    instances.map((i) => i.name).join(", ") || "(none configured)"
+    instances.map((i) => `${i.name} (writes: ${(i.writes ?? WRITE_ACTIONS).join(", ") || "off"})`).join(", ") ||
+    "(none configured)"
   }`,
 );
 if (instances.length === 0) {

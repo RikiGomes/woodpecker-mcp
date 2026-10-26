@@ -1,14 +1,19 @@
 # woodpecker-mcp
 
-Read-only MCP stdio server exposing Woodpecker CI pipeline status and logs.
+MCP stdio server exposing Woodpecker CI pipeline status and logs, plus guarded
+restart and cancel.
 See [README.md](README.md) for usage; this file records the invariants that are
 easy to break and not obvious from any single file.
 
 ## Invariants
 
-- **Read-only by contract.** Only GET requests, and no restart/approve/cancel
-  surface. Adding a write tool changes what this server is: don't, unless the
-  request is explicitly to do so.
+- **Read-mostly by contract.** Reads are GET only. The only writes are
+  `restart_pipeline` and `cancel_pipeline`: POST only, never DELETE/PATCH, on
+  by default and narrowed per instance with `ALLOW_WRITE` / `WRITE_REPOS`.
+  They refuse deployment, tag and release pipelines; restart sends no query
+  string (it would become a deployment or env vars) and refuses runs that
+  skipped approval. Approve, secrets, deletes and settings stay out: adding
+  another write tool needs an explicit request.
 - **stdout belongs to the JSON-RPC protocol.** Never `console.log` /
   `process.stdout.write` anywhere reachable from the server: it corrupts the
   message stream. All human-readable output goes to stderr via `console.error`.

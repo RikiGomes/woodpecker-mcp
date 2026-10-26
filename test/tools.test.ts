@@ -122,7 +122,7 @@ function fakeWoodpecker(url: URL, method = "GET"): Response {
     case url.pathname === "/api/repos/7/pipelines/26":
       return json(writeRun(26, { status: "canceled", event: "push", started: 0 }));
     case url.pathname === "/api/repos/7/pipelines/27":
-      return json(writeRun(27, { status: "error", event: "push", started: 0 }));
+      return json(writeRun(27, { status: "error", event: "push", started: 0, variables: {} }));
     case url.pathname === "/api/repos/7/pipelines/29":
       return json(writeRun(29, { status: "killed", event: "pull_request", started: 0 }));
     case url.pathname === "/api/repos/7/pipelines/30":

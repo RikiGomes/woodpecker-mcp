@@ -12,8 +12,8 @@ easy to break and not obvious from any single file.
   by default and narrowed per instance with `ALLOW_WRITE` / `WRITE_REPOS`.
   They refuse deployment, tag and release pipelines; restart sends no query
   string (it would become a deployment or env vars) and refuses runs that
-  skipped approval or carry manual/cron variables. Approve, secrets, deletes and settings stay out: adding
-  another write tool needs an explicit request.
+  skipped approval or carry manual/cron variables. Approve, secrets, deletes
+  and settings stay out: adding another write tool needs an explicit request.
 - **stdout belongs to the JSON-RPC protocol.** Never `console.log` /
   `process.stdout.write` anywhere reachable from the server: it corrupts the
   message stream. All human-readable output goes to stderr via `console.error`.

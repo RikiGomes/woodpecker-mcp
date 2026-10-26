@@ -968,7 +968,7 @@ export function registerTools(server: McpServer, context: ToolContext): void {
         annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
         description:
           "Re-runs a finished pipeline (success, failure, error, killed or canceled) as a new pipeline with the same commit and config, and returns the new pipeline's number, status and web URL. " +
-          "Refused for deployment, tag and release pipelines, for running, pending, blocked or declined ones, and for runs that may have skipped approval: fork pipelines and pipelines stopped before they ran, unless someone approved them. " +
+          "Refused for deployment, tag and release pipelines, for running, pending, blocked or declined ones, for pipelines with manual or cron variables, and for runs that may have skipped approval: fork pipelines and pipelines stopped before they ran, unless someone approved them. " +
           "Never changes the event, deploy target or variables. Follow the new run with get_pipeline. " +
           UNTRUSTED_NOTE,
         inputSchema: {
@@ -989,6 +989,11 @@ export function registerTools(server: McpServer, context: ToolContext): void {
           if (!pipeline.reviewed_by && (pipeline.from_fork || stoppedBeforeStart)) {
             throw new Error(
               `Refusing to restart pipeline #${target}: it ${pipeline.from_fork ? "comes from a fork" : "was stopped before it ran"} and was never approved, so restarting could skip Woodpecker's approval gate. Use the Woodpecker UI.`,
+            );
+          }
+          if (Object.keys(pipeline.variables ?? {}).length > 0) {
+            throw new Error(
+              `Refusing to restart pipeline #${target}: it carries manual or cron variables, which the restart would replay. Use the Woodpecker UI.`,
             );
           }
           const restarted = await client.restartPipeline(repoId, target);

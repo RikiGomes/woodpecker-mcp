@@ -30,5 +30,10 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    groups:
+      # init and analyze must run the same version; split bumps fail CodeQL.
+      codeql-action:
+        patterns:
+          - github/codeql-action*
     commit-message:
       prefix: ci

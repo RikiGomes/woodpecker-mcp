@@ -40,11 +40,12 @@ easy to break and not obvious from any single file.
 - Dependencies are pinned to exact versions. Bump them deliberately, and keep
   `npm audit --omit=dev --audit-level=high` clean; CI enforces it.
 - **`@types/node` tracks the minimum supported runtime, not the newest Node.**
-  `engines` says `>=20.12`, so the types stay on 20.x: typing against a newer
+  `engines` says `>=22.12`, so the types stay on 22.x: typing against a newer
   major lets code compile that would crash on the version this package
-  promises to support. (`process.loadEnvFile`, which needs 20.12, was exactly
-  this bug once.) Dependabot is configured to ignore its majors; raise the
-  floor in `engines` first if you want newer types.
+  promises to support. (`process.loadEnvFile`, which needed 20.12 back when
+  the floor was 20, was exactly this bug once.) Dependabot is configured to
+  ignore its majors; raise the floor in `engines` first if you want newer
+  types.
 - **The version lives only in `package.json`.** The server reads it at
   startup and smoke checks the advertised value. To release, bump it in a PR,
   then tag the merge commit `vX.Y.Z` and publish a GitHub release.

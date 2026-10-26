@@ -17,7 +17,7 @@
     "url": "git+https://github.com/RikiGomes/woodpecker-mcp.git"
   },
   "engines": {
-    "node": ">=20.12"
+    "node": ">=22.12"
   },
   "bin": {
     "woodpecker-mcp": "dist/index.js"
@@ -37,12 +37,12 @@
     "smoke": "node scripts/smoke.mjs"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "1.32.1",
-    "zod": "4.6.5"
+    "@modelcontextprotocol/sdk": "1.32.2",
+    "zod": "4.6.7"
   },
   "devDependencies": {
-    "@types/node": "20.19.43",
+    "@types/node": "22.20.5",
     "typescript": "7.0.2",
-    "vitest": "4.1.11"
+    "vitest": "4.1.12"
   }
 }

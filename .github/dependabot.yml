@@ -16,9 +16,9 @@ updates:
           - minor
           - patch
     ignore:
-      # Majors are bumped by hand: they tend to raise the Node floor (vitest 5
-      # needs ^22.12) or, for @types/node, type against a runtime newer than
-      # engines (>=20.12) promises, which lets crashing code compile.
+      # Majors are bumped by hand: they tend to raise the Node floor or, for
+      # @types/node, type against a runtime newer than engines (>=22.12)
+      # promises, which lets crashing code compile.
       - dependency-name: '*'
         update-types:
           - version-update:semver-major

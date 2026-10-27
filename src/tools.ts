@@ -1129,7 +1129,11 @@ export function registerTools(server: McpServer, context: ToolContext): void {
           const { client, repoId } = await writeRepo("cron", instance, repo);
           const cron = await client.getCron(repoId, cron_id);
           if (cron.enabled !== true) {
-            throw new Error(`Refusing to run cron job "${cron.name ?? cron_id}": it is disabled. Use the Woodpecker UI.`);
+            const reason =
+              cron.enabled === false
+                ? "it is disabled"
+                : "this Woodpecker server does not report whether it is enabled (added in v3.13)";
+            throw new Error(`Refusing to run cron job "${cron.name ?? cron_id}": ${reason}. Use the Woodpecker UI.`);
           }
           const pipeline = await client.runCron(repoId, cron_id);
           return ok({ ...repoRef(repo, repoId), cron: cron.name ?? cron_id, ...created(client, repoId, pipeline) });

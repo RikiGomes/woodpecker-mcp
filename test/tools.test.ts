@@ -170,6 +170,8 @@ function fakeWoodpecker(url: URL, method = "GET", body?: string): Response {
       return json({ id: 1, name: "nightly", branch: "main", enabled: true, variables: { DEPLOY_ENV: "staging" } });
     case url.pathname === "/api/repos/7/cron/2":
       return json({ id: 2, name: "weekly", branch: "main", enabled: false });
+    case url.pathname === "/api/repos/7/cron/5":
+      return json({ id: 5, name: "legacy", branch: "main" });
     case url.pathname === "/api/repos/8/cron/4":
       return json({ id: 4, name: "docs", enabled: true });
     case url.pathname === "/api/repos/7/pull_requests":
@@ -946,6 +948,10 @@ describe("write tools", () => {
     const missing = await call("run_cron", { cron_id: 3 });
     expect(missing.isError).toBe(true);
     expect(textOf(missing)).toContain("HTTP 404");
+    const legacy = await call("run_cron", { cron_id: 5 });
+    expect(legacy.isError).toBe(true);
+    expect(textOf(legacy)).toContain("does not report whether");
+    expect(textOf(legacy)).not.toContain("it is disabled");
     expect(posted.length).toBe(before);
   });
 

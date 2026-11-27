@@ -106,7 +106,7 @@ the pair in a gitignored `.env.woodpecker` (see above). Without either, the
 server starts with no instances and every tool call fails.
 
 This tracks `main`. To pin a release instead, append its tag, for example
-`github:RikiGomes/woodpecker-mcp#v0.1.0`; tags are listed on the
+`github:RikiGomes/woodpecker-mcp#v0.3.0`; tags are listed on the
 [releases page](https://github.com/RikiGomes/woodpecker-mcp/releases).
 
 Alternatively, clone it once and point at the local build:
